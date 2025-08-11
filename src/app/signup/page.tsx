@@ -1,74 +1,171 @@
 "use client";
+
 import React, { useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 
-const SignupPage = () => {
-  const [form, setForm] = useState({ email: "", password: "" });
+/**
+ * Full signup page wired to your FastAPI backend.
+ * Your backend endpoint expects email & password as QUERY params,
+ * so we send them in the URL, not as JSON.
+ *
+ * Make sure NEXT_PUBLIC_API_BASE is set (e.g. https://caio-backend.onrender.com)
+ */
+export default function Signup() {
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
+  const API = process.env.NEXT_PUBLIC_API_BASE || "";
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
+    setMessage("");
     setLoading(true);
-    setSuccess(null);
-    setError(null);
 
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-      setSuccess("Signup successful! You can now log in.");
-      setForm({ email: "", password: "" });
+      // Your FastAPI route:
+      // @app.post("/api/signup")
+      // def signup(email: str, password: str, ...)
+      //
+      // Because the backend parameters are plain `str` (not Form/Body),
+      // FastAPI reads them from the QUERY STRING.
+      const url = `${API}/api/signup?email=${encodeURIComponent(
+        email.trim()
+      )}&password=${encodeURIComponent(password.trim())}`;
+
+      const res = await fetch(url, { method: "POST" });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setMessage(err.detail || "Signup failed. Try a different email.");
+        setLoading(false);
+        return;
+      }
+
+      // If we get here, it worked
+      setMessage("Signup successful! You can now log in.");
+      // small pause so user sees the message, then go to login
+      setTimeout(() => router.push("/"), 1200);
     } catch {
-      setError("Signup failed. Please try again.");
+      setMessage("Network error. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="signup-page">
-      <h1>Sign Up</h1>
-      <form onSubmit={handleSubmit} autoComplete="off">
-        <div>
-          <label>Email:</label>
-          <input
-            name="email"
-            type="email"
-            required
-            value={form.email}
-            onChange={handleChange}
-            disabled={loading}
-            autoComplete="new-email"
-          />
-        </div>
-        <div>
-          <label>Password:</label>
-          <input
-            name="password"
-            type="password"
-            required
-            value={form.password}
-            onChange={handleChange}
-            disabled={loading}
-            autoComplete="new-password"
-          />
-        </div>
-        <button type="submit" disabled={loading}>
-          {loading ? "Signing up..." : "Sign Up"}
+    <div
+      style={{
+        maxWidth: 420,
+        margin: "60px auto",
+        background: "#fff",
+        padding: 32,
+        borderRadius: 10,
+        boxShadow: "0 0 18px #e9ecef",
+      }}
+    >
+      <h1
+        style={{
+          textAlign: "center",
+          fontSize: "2.1em",
+          letterSpacing: "1.2px",
+          color: "#154272",
+          marginBottom: 7,
+        }}
+      >
+        Sign Up
+      </h1>
+      <div
+        style={{
+          textAlign: "center",
+          fontSize: "1.02em",
+          color: "#375074",
+          marginBottom: 23,
+          letterSpacing: ".3px",
+        }}
+      >
+        Create your CAIO account
+      </div>
+
+      <form onSubmit={handleSignup}>
+        <label style={{ fontWeight: 600 }}>Email</label>
+        <input
+          type="email"
+          value={email}
+          autoComplete="email"
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="your@email.com"
+          required
+          style={{
+            width: "100%",
+            padding: "10px 8px",
+            margin: "7px 0 14px 0",
+            borderRadius: 4,
+            border: "1px solid #d5dbe3",
+            fontSize: "1.07em",
+          }}
+        />
+
+        <label style={{ fontWeight: 600 }}>Password</label>
+        <input
+          type="password"
+          value={password}
+          autoComplete="new-password"
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Choose a password"
+          required
+          style={{
+            width: "100%",
+            padding: "10px 8px",
+            margin: "7px 0 18px 0",
+            borderRadius: 4,
+            border: "1px solid #d5dbe3",
+            fontSize: "1.07em",
+          }}
+        />
+
+        <button
+          type="submit"
+          disabled={loading}
+          style={{
+            width: "100%",
+            padding: 13,
+            background: loading ? "#6c87a3" : "#154272",
+            cursor: loading ? "not-allowed" : "pointer",
+            color: "#fff",
+            border: "none",
+            borderRadius: 4,
+            fontWeight: 700,
+            fontSize: "1.09em",
+            letterSpacing: ".5px",
+            marginTop: 6,
+          }}
+        >
+          {loading ? "Creating account..." : "Sign Up"}
         </button>
+
+        {message && (
+          <div
+            style={{
+              marginTop: 18,
+              color: message.toLowerCase().includes("failed") ? "crimson" : "#13706a",
+              fontWeight: 600,
+              textAlign: "center",
+            }}
+          >
+            {message}
+          </div>
+        )}
       </form>
-      {success && <p style={{ color: "green" }}>{success}</p>}
-      {error && <p style={{ color: "red" }}>{error}</p>}
-      <p>
+
+      <div style={{ textAlign: "center", marginTop: 18 }}>
         Already have an account?{" "}
-        <Link href="/">Go to Home</Link>
-      </p>
+        <a href="/" style={{ color: "#154272", fontWeight: 600 }}>
+          Go to Login
+        </a>
+      </div>
     </div>
   );
-};
-
-export default SignupPage;
+}
