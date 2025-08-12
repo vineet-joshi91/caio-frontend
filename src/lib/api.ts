@@ -1,82 +1,49 @@
 // src/lib/api.ts
-import { getToken } from "./auth";
+import axios from "axios";
 
-const API = process.env.NEXT_PUBLIC_API_URL;
+/** Public base URL for the backend, e.g. https://caio-backend.onrender.com */
+export const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE || "https://caio-backend.onrender.com";
 
-if (!API) {
-  // Helps catch misconfigured environments early
-  // (won't break the build, but you'll see it at runtime)
-  console.warn("NEXT_PUBLIC_API_URL is missing");
-}
+/** Token helpers */
+export const getToken = () => (typeof window !== "undefined" ? localStorage.getItem("token") : null);
+export const setToken = (t: string) => typeof window !== "undefined" && localStorage.setItem("token", t);
+export const clearToken = () => typeof window !== "undefined" && localStorage.removeItem("token");
 
-export type LoginResponse = {
-  access_token: string;
-  token_type: string;
-};
+/** Preconfigured axios instance */
+const http = axios.create({
+  baseURL: API_BASE,
+  withCredentials: false,
+});
 
-export async function apiLogin(email: string, password: string): Promise<LoginResponse> {
-  // FastAPI's OAuth2PasswordRequestForm expects form-encoded with fields: username, password
-  const res = await fetch(`${API}/api/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ username: email, password }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.detail || "Login failed");
-  }
-  return res.json();
-}
-
-export async function apiSignup(email: string, password: string): Promise<{ message: string }> {
-  // Your FastAPI /api/signup expects simple function params (query args)
-  const url = `${API}/api/signup?email=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`;
-  const res = await fetch(url, { method: "POST" }); // body not required for these query params
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.detail || "Signup failed");
-  }
-  return res.json();
-}
-
-export type Profile = {
-  email: string;
-  is_admin: boolean;
-  is_paid: boolean;
-  created_at: string;
-};
-
-export async function apiProfile(): Promise<Profile> {
+http.interceptors.request.use((config) => {
   const token = getToken();
-  const res = await fetch(`${API}/api/profile`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.detail || "Profile fetch failed");
+  if (token && !config.headers.Authorization) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
-  return res.json();
+  return config;
+});
+
+http.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (err?.response?.status === 401) {
+      clearToken();
+      // Optional: send user back to login
+      if (typeof window !== "undefined") window.location.href = "/"; // or "/login"
+    }
+    return Promise.reject(err);
+  }
+);
+
+/** Optional convenience login using axios (not required if you use fetch in page.tsx) */
+export async function login(username: string, password: string) {
+  const res = await http.post(
+    "/api/login",
+    new URLSearchParams({ username, password }),
+    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+  );
+  return res.data as { access_token: string; token_type: string };
 }
 
-export type AdminStats = {
-  users: number;
-  paid_users: number;
-  usage_logs: number;
-  admin_email: string;
-};
-
-export async function apiAdmin(): Promise<AdminStats> {
-  const token = getToken();
-  const res = await fetch(`${API}/api/admin`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.detail || "Admin fetch failed");
-  }
-  return res.json();
-}
+export default http;
