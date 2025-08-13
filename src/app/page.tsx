@@ -1,63 +1,148 @@
-"use client";
-import React, { useState } from "react";
-import { useRouter } from "next/navigation";
+// src/app/page.tsx
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { login, getProfile } from '@/lib/api';
 
 export default function Home() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [message, setMessage] = useState("");
+
+  // simple UI state
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Works with either var name; falls back to your Render URL
-  const API =
-    process.env.NEXT_PUBLIC_API_URL ||
-    process.env.NEXT_PUBLIC_API_BASE ||
-    "https://caio-backend.onrender.com";
+  // On first paint: if we already have a token, go straight to the right page.
+  useEffect(() => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
 
-  const handleLogin = async (e: React.FormEvent) => {
+      // Peek at profile to decide destination
+      getProfile(token)
+        .then((p) => {
+          if (p.is_admin) router.replace('/admin');
+          else router.replace('/dashboard');
+        })
+        .catch(() => {
+          // token invalid → clear it, stay on login
+          localStorage.removeItem('token');
+        });
+    } catch {
+      // ignore
+    }
+  }, [router]);
+
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
-    setMessage("");
+    setMsg(null);
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          username: email.trim(),   // FastAPI OAuth2 expects "username"
-          password: password.trim(),
-        }),
-      });
+      const { access_token } = await login(email, password);
+      localStorage.setItem('token', access_token);
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setMessage(err.detail || "Invalid email or password.");
-        return;
+      const profile = await getProfile(access_token);
+      // Store a tiny bit of profile for client-only checks if you want
+      localStorage.setItem('email', profile.email);
+      localStorage.setItem('is_admin', String(profile.is_admin));
+      localStorage.setItem('is_paid', String(profile.is_paid));
+
+      if (profile.is_admin) {
+        router.replace('/admin');
+      } else {
+        router.replace('/dashboard');
       }
-
-      const data = (await res.json()) as { access_token: string; token_type: string };
-      localStorage.setItem("token", data.access_token);
-
-      // Optional: route admins differently
-      let next = "/dashboard";
-      try {
-        const prof = await fetch(`${API}/api/profile`, {
-          headers: { Authorization: `Bearer ${data.access_token}` },
-        });
-        if (prof.ok) {
-          const j = await prof.json();
-          if (j?.is_admin) next = "/admin";
-        }
-      } catch {}
-
-      setMessage("Welcome! Redirecting...");
-      router.push(next);
-    } catch {
-      setMessage("Network error. Please try again.");
+    } catch (err: unknown) {
+      setMsg('Invalid email or password.');
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  // ... keep your JSX exactly as you have it
+  return (
+    <main style={{ maxWidth: 720, margin: '40px auto', padding: '0 16px' }}>
+      <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.1 }}>CAIO</h1>
+      <p style={{ color: '#334155', marginTop: 8 }}>
+        Your AI-Powered Chief Intelligence Officer
+      </p>
+
+      <form onSubmit={handleLogin} style={{ marginTop: 18 }}>
+        <div style={{ display: 'grid', gap: 10, maxWidth: 420 }}>
+          <label style={{ fontWeight: 600 }}>Email</label>
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            inputMode="email"
+            autoComplete="email"
+            placeholder="you@example.com"
+            style={{
+              padding: '10px 12px',
+              border: '1px solid #e5e7eb',
+              borderRadius: 8,
+            }}
+            required
+          />
+          <label style={{ fontWeight: 600, marginTop: 8 }}>Password</label>
+          <input
+            type="password"
+            value={password}
+            autoComplete="current-password"
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+            style={{
+              padding: '10px 12px',
+              border: '1px solid #e5e7eb',
+              borderRadius: 8,
+            }}
+            required
+          />
+
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              marginTop: 14,
+              background: '#154272',
+              color: '#fff',
+              padding: '10px 16px',
+              borderRadius: 8,
+              fontWeight: 700,
+              border: 0,
+              opacity: loading ? 0.7 : 1,
+            }}
+          >
+            {loading ? 'Signing in…' : 'Login'}
+          </button>
+
+          {msg && <div style={{ color: '#b91c1c', marginTop: 8 }}>{msg}</div>}
+
+          <div style={{ marginTop: 8, fontSize: 14, color: '#64748b' }}>
+            New here?{' '}
+            <Link href="/signup" style={{ color: '#0f4a8a', fontWeight: 600 }}>
+              Create an account
+            </Link>
+          </div>
+        </div>
+      </form>
+
+      <div style={{ marginTop: 18 }}>
+        <Link
+          href="/dashboard"
+          style={{
+            display: 'inline-block',
+            background: '#0f4a8a',
+            color: '#fff',
+            padding: '10px 16px',
+            borderRadius: 8,
+            fontWeight: 700,
+          }}
+        >
+          Go to dashboard
+        </Link>
+      </div>
+    </main>
+  );
 }
