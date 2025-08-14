@@ -1,13 +1,44 @@
-// src/lib/api.ts
-import axios from "axios";
+'use client';
+
+import axios from 'axios';
 
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || "https://caio-backend.onrender.com";
+  process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:8000';
 
-export interface LoginResult {
-  access_token: string;
-  token_type: "bearer";
+export const api = axios.create({
+  baseURL: API_BASE,
+  timeout: 20000,
+});
+
+// ---- Auth helpers -----------------------------------------------------------
+
+export function setAuthToken(token: string | null) {
+  if (token) {
+    api.defaults.headers.common.Authorization = `Bearer ${token}`;
+    try {
+      localStorage.setItem('caio_token', token);
+    } catch {
+      /* ignore */
+    }
+  } else {
+    delete api.defaults.headers.common.Authorization;
+    try {
+      localStorage.removeItem('caio_token');
+    } catch {
+      /* ignore */
+    }
+  }
 }
+
+export function getStoredToken(): string | null {
+  try {
+    return localStorage.getItem('caio_token');
+  } catch {
+    return null;
+  }
+}
+
+// ---- Types ------------------------------------------------------------------
 
 export interface Profile {
   email: string;
@@ -16,21 +47,7 @@ export interface Profile {
   created_at: string;
 }
 
-export async function login(email: string, password: string): Promise<LoginResult> {
-  // FastAPI OAuth2PasswordRequestForm expects "username" and "password"
-  const body = new URLSearchParams();
-  body.set("username", email);
-  body.set("password", password);
-
-  const { data } = await axios.post<LoginResult>(`${API_BASE}/api/login`, body, {
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-  });
-  return data;
-}
-
-export async function getProfile(token: string): Promise<Profile> {
-  const { data } = await axios.get<Profile>(`${API_BASE}/api/profile`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return data;
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
 }

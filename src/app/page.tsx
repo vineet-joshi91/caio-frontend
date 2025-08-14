@@ -1,147 +1,116 @@
-// src/app/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { login, getProfile } from '@/lib/api';
+import { api, setAuthToken, getStoredToken, Profile, LoginResponse } from '@/lib/api';
 
-export default function Home() {
+const ADMIN_EMAIL = 'vineetpjoshi.71@gmail.com';
+
+export default function LoginPage() {
   const router = useRouter();
 
-  // simple UI state
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [msg, setMsg] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [message, setMessage] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(false);
 
-  // On first paint: if we already have a token, go straight to the right page.
+  // If there’s already a token, try to fast-redirect based on profile
   useEffect(() => {
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) return;
-
-      // Peek at profile to decide destination
-      getProfile(token)
-        .then((p) => {
-          if (p.is_admin) router.replace('/admin');
-          else router.replace('/dashboard');
-        })
-        .catch(() => {
-          // token invalid → clear it, stay on login
-          localStorage.removeItem('token');
-        });
-    } catch {
-      // ignore
-    }
+    const existing = getStoredToken();
+    if (!existing) return;
+    setAuthToken(existing);
+    (async () => {
+      try {
+        const { data } = await api.get<Profile>('/api/profile');
+        if (data.is_admin || data.email.toLowerCase() === ADMIN_EMAIL) {
+          router.replace('/admin');
+        } else {
+          router.replace('/dashboard');
+        }
+      } catch {
+        // silently ignore and let user log in again
+      }
+    })();
   }, [router]);
 
-  async function handleLogin(e: React.FormEvent) {
+  async function handleLogin(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setMsg(null);
+    setMessage('');
     setLoading(true);
     try {
-      const { access_token } = await login(email, password);
-      localStorage.setItem('token', access_token);
+      // FastAPI OAuth2PasswordRequestForm expects form fields "username" and "password"
+      const form = new URLSearchParams();
+      form.set('username', email.trim());
+      form.set('password', password);
 
-      const profile = await getProfile(access_token);
-      // Store a tiny bit of profile for client-only checks if you want
-      localStorage.setItem('email', profile.email);
-      localStorage.setItem('is_admin', String(profile.is_admin));
-      localStorage.setItem('is_paid', String(profile.is_paid));
+      const { data } = await api.post<LoginResponse>('/api/login', form, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
 
-      if (profile.is_admin) {
+      setAuthToken(data.access_token);
+
+      // Load profile to decide where to go
+      const profile = await api.get<Profile>('/api/profile').then(r => r.data);
+
+      if (profile.is_admin || profile.email.toLowerCase() === ADMIN_EMAIL) {
         router.replace('/admin');
       } else {
         router.replace('/dashboard');
       }
-    } catch (err: unknown) {
-      setMsg('Invalid email or password.');
+    } catch (err) {
+      setMessage('Invalid email or password.');
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <main style={{ maxWidth: 720, margin: '40px auto', padding: '0 16px' }}>
-      <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.1 }}>CAIO</h1>
-      <p style={{ color: '#334155', marginTop: 8 }}>
-        Your AI-Powered Chief Intelligence Officer
-      </p>
+    <main className="min-h-screen grid place-items-center bg-slate-50 p-4">
+      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h1 className="text-2xl font-bold text-slate-900 mb-1">CAIO</h1>
+        <p className="text-slate-600 mb-6">Your AI-Powered Chief Intelligence Officer</p>
 
-      <form onSubmit={handleLogin} style={{ marginTop: 18 }}>
-        <div style={{ display: 'grid', gap: 10, maxWidth: 420 }}>
-          <label style={{ fontWeight: 600 }}>Email</label>
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            inputMode="email"
-            autoComplete="email"
-            placeholder="you@example.com"
-            style={{
-              padding: '10px 12px',
-              border: '1px solid #e5e7eb',
-              borderRadius: 8,
-            }}
-            required
-          />
-          <label style={{ fontWeight: 600, marginTop: 8 }}>Password</label>
-          <input
-            type="password"
-            value={password}
-            autoComplete="current-password"
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            style={{
-              padding: '10px 12px',
-              border: '1px solid #e5e7eb',
-              borderRadius: 8,
-            }}
-            required
-          />
+        <form onSubmit={handleLogin} className="grid gap-4">
+          <label className="grid gap-1">
+            <span className="text-sm text-slate-600">Email</span>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              required
+              className="rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-sm text-slate-600">Password</span>
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              required
+              className="rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
 
           <button
             type="submit"
             disabled={loading}
-            style={{
-              marginTop: 14,
-              background: '#154272',
-              color: '#fff',
-              padding: '10px 16px',
-              borderRadius: 8,
-              fontWeight: 700,
-              border: 0,
-              opacity: loading ? 0.7 : 1,
-            }}
+            className="rounded-lg bg-blue-800 hover:bg-blue-900 text-white font-semibold px-4 py-2 disabled:opacity-60"
           >
-            {loading ? 'Signing in…' : 'Login'}
+            {loading ? 'Logging in…' : 'Login'}
           </button>
 
-          {msg && <div style={{ color: '#b91c1c', marginTop: 8 }}>{msg}</div>}
+          {message && <p className="text-red-600 text-sm">{message}</p>}
+        </form>
 
-          <div style={{ marginTop: 8, fontSize: 14, color: '#64748b' }}>
-            New here?{' '}
-            <Link href="/signup" style={{ color: '#0f4a8a', fontWeight: 600 }}>
-              Create an account
-            </Link>
-          </div>
+        <div className="mt-4 text-sm">
+          <span className="text-slate-600">Don&apos;t have an account? </span>
+          <Link href="/signup" className="text-blue-800 font-semibold hover:underline">
+            Sign up
+          </Link>
         </div>
-      </form>
-
-      <div style={{ marginTop: 18 }}>
-        <Link
-          href="/dashboard"
-          style={{
-            display: 'inline-block',
-            background: '#0f4a8a',
-            color: '#fff',
-            padding: '10px 16px',
-            borderRadius: 8,
-            fontWeight: 700,
-          }}
-        >
-          Go to dashboard
-        </Link>
       </div>
     </main>
   );
