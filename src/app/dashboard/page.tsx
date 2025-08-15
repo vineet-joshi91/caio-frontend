@@ -1,181 +1,120 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState, FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { api, getStoredToken, setAuthToken, Profile } from '@/lib/api';
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
-type Brain = 'CFO' | 'COO' | 'CMO' | 'CHRO';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "(missing)";
 
-export default function DashboardPage() {
-  const router = useRouter();
+type Me = { email: string; is_admin: boolean; is_paid: boolean; created_at?: string };
 
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [text, setText] = useState<string>('');
-  const [brains, setBrains] = useState<Record<Brain, boolean>>({
-    CFO: true,
-    COO: false,
-    CMO: false,
-    CHRO: false,
+function withTimeout<T>(p: Promise<T>, ms = 12000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`timeout after ${ms}ms`)), ms);
+    p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
   });
-  const [loading, setLoading] = useState<boolean>(false);
-  const [result, setResult] = useState<Record<string, string>>({});
+}
 
-  // Load token + profile
+function getToken(): string | null {
+  try {
+    const m = document.cookie.match(/(?:^|;\s*)token=([^;]+)/);
+    if (m) return decodeURIComponent(m[1]);
+  } catch {}
+  try { return localStorage.getItem("token"); } catch {}
+  return null;
+}
+
+export default function Dashboard() {
+  const router = useRouter();
+  const [me, setMe] = useState<Me | null>(null);
+  const [state, setState] = useState<{busy:boolean; err?:string}>({busy:true});
+
+  const token = useMemo(getToken, []);
+
   useEffect(() => {
-    const token = getStoredToken();
-    if (!token) {
-      router.replace('/');
-      return;
-    }
-    setAuthToken(token);
     (async () => {
+      if (!token) { setState({busy:false, err:"No token found. Please log in again."}); return; }
+      if (API_BASE === "(missing)") { setState({busy:false, err:"NEXT_PUBLIC_API_BASE is missing on the frontend host."}); return; }
       try {
-        const { data } = await api.get<Profile>('/api/profile');
-        setProfile(data);
-      } catch {
-        router.replace('/');
+        const r = await withTimeout(fetch(`${API_BASE}/api/profile`, { headers: { Authorization: `Bearer ${token}` }}), 12000);
+        if (!r.ok) {
+          const t = await r.text().catch(()=> "");
+          throw new Error(`/api/profile ${r.status} ${r.statusText} :: ${t}`);
+        }
+        const j = await r.json();
+        setMe({ email:j.email, is_admin:!!j.is_admin, is_paid:!!j.is_paid, created_at:j.created_at });
+        setState({busy:false});
+      } catch (e:any) {
+        setState({busy:false, err: e?.message || "Failed to load profile"});
       }
     })();
-  }, [router]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const demoMode = useMemo(() => {
-    if (!profile) return true;
-    return !profile.is_paid && !profile.is_admin;
-  }, [profile]);
-
-  const selectedBrains = useMemo(
-    () => (Object.keys(brains) as Brain[]).filter(b => brains[b]),
-    [brains]
-  );
-
-  function toggleBrain(b: Brain) {
-    setBrains(prev => ({ ...prev, [b]: !prev[b] }));
+  if (state.busy) {
+    return <main className="min-h-screen flex items-center justify-center bg-black text-white">Loading…</main>;
   }
 
-  async function runAnalysis(e: FormEvent) {
-    e.preventDefault();
-    if (demoMode) return; // blocked in demo
-
-    setLoading(true);
-    setResult({});
-    try {
-      const { data } = await api.post<{ insights: Record<string, string>; tokens_used: number }>(
-        '/api/analyze',
-        { text, brains: selectedBrains }
-      );
-      setResult(data.insights ?? {});
-    } catch (err) {
-      setResult({ error: 'Analysis failed. If you are on the free plan, please upgrade.' });
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function logout() {
-    setAuthToken(null);
-    router.replace('/');
-  }
-
-  if (!profile) {
+  if (state.err) {
     return (
-      <main className="min-h-screen grid place-items-center bg-slate-50">
-        <p className="text-slate-600">Loading…</p>
+      <main className="min-h-screen flex items-center justify-center bg-black text-white p-6">
+        <div className="max-w-xl w-full bg-white/10 p-6 rounded-xl">
+          <h1 className="text-xl mb-3">Dashboard error</h1>
+          <pre className="text-xs whitespace-pre-wrap">{state.err}</pre>
+          <div className="text-sm opacity-75 mt-3">
+            <div><b>API_BASE:</b> {API_BASE}</div>
+            <div><b>Token present:</b> {token ? "yes" : "no"}</div>
+            <p className="mt-2">Open <a className="underline" href="/diagnostics">/diagnostics</a> for details.</p>
+          </div>
+        </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4">
-      <div className="mx-auto max-w-4xl">
-        <header className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-xl font-bold text-slate-900">Dashboard</h1>
-            <p className="text-slate-600">
-              Welcome, <span className="font-semibold">{profile.email}</span>
-              {profile.is_admin ? (
-                <span className="ml-2 inline-block rounded bg-emerald-100 text-emerald-800 px-2 py-0.5 text-xs">
-                  Admin
-                </span>
-              ) : (
-                <span className="ml-2 inline-block rounded bg-slate-100 text-slate-800 px-2 py-0.5 text-xs">
-                  Free
-                </span>
-              )}
-            </p>
-          </div>
-
-          <div className="flex gap-2">
-            {profile.is_admin && (
-              <Link
-                href="/admin"
-                className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-800 bg-white hover:bg-slate-50"
-              >
-                Admin
-              </Link>
-            )}
-            <button
-              onClick={logout}
-              className="rounded-md bg-blue-800 hover:bg-blue-900 text-white px-3 py-1.5 text-sm font-semibold"
-            >
-              Log out
-            </button>
-          </div>
+    <main className="min-h-screen p-6 bg-black text-white">
+      <div className="max-w-3xl mx-auto space-y-6">
+        <header className="bg-white/10 p-6 rounded-xl">
+          <h1 className="text-2xl mb-1">Welcome to CAIO</h1>
+          <p className="opacity-80">
+            Logged in as <b>{me?.email}</b> • {me?.is_admin ? "Admin" : "User"} • {me?.is_paid ? "Pro" : "Demo"}
+          </p>
         </header>
-
-        {demoMode && (
-          <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
-            <strong>Demo mode:</strong> analysis is disabled on the free plan. Upgrade to unlock all brains.
-          </div>
-        )}
-
-        <form onSubmit={runAnalysis} className="grid gap-3">
-          <label className="grid gap-1">
-            <span className="text-sm text-slate-600">Paste content to analyze</span>
-            <textarea
-              value={text}
-              onChange={e => setText(e.target.value)}
-              rows={10}
-              className="w-full rounded-lg border border-slate-300 p-3"
-              placeholder="Paste a report, transcript, or notes…"
-            />
-          </label>
-
-          <div className="text-sm text-slate-700">Choose brains</div>
-          <div className="flex flex-wrap gap-3">
-            {(Object.keys(brains) as Brain[]).map(b => (
-              <label key={b} className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={brains[b]}
-                  onChange={() => toggleBrain(b)}
-                />
-                <span>{b}</span>
-              </label>
-            ))}
-          </div>
-
-          <button
-            type="submit"
-            disabled={demoMode || loading || text.trim().length === 0}
-            className="mt-1 rounded-lg bg-blue-800 hover:bg-blue-900 text-white font-semibold px-4 py-2 disabled:opacity-60"
-          >
-            {loading ? 'Running…' : demoMode ? 'Upgrade to run analysis' : 'Run analysis'}
-          </button>
-        </form>
-
-        {Object.keys(result).length > 0 && (
-          <section className="mt-6 grid gap-3">
-            <h2 className="text-lg font-semibold text-slate-900">Insights</h2>
-            {Object.entries(result).map(([brain, insight]) => (
-              <div key={brain} className="rounded-lg border border-slate-200 bg-white p-3">
-                <div className="text-sm font-semibold text-slate-800 mb-1">{brain}</div>
-                <pre className="whitespace-pre-wrap text-slate-700 text-sm">{insight}</pre>
-              </div>
-            ))}
-          </section>
-        )}
+        <section className="bg-white/10 p-6 rounded-xl">
+          <h2 className="text-xl mb-3">Quick analyze</h2>
+          <Analyzer />
+        </section>
       </div>
     </main>
+  );
+}
+
+function Analyzer() {
+  const [text, setText] = useState("");
+  const [out, setOut] = useState<string>("");
+  const [err, setErr] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <div>
+      <textarea className="w-full h-28 p-2 rounded text-black" value={text} onChange={e=>setText(e.target.value)} placeholder="Paste a short note…" />
+      <button className="mt-3 px-4 py-2 rounded bg-blue-600 disabled:opacity-60" disabled={busy} onClick={async ()=>{
+        setBusy(true); setErr(""); setOut("");
+        try {
+          const token = getToken();
+          if (!token) throw new Error("Missing token");
+          if (!text.trim()) throw new Error("Enter some text first");
+          const fd = new FormData(); fd.append("text", text.trim());
+          const r = await withTimeout(fetch(`${API_BASE}/api/analyze`, { method:"POST", headers:{ Authorization:`Bearer ${token}` }, body: fd }), 20000);
+          if (!r.ok) { const t = await r.text().catch(()=> ""); throw new Error(`/api/analyze ${r.status} ${r.statusText} :: ${t}`); }
+          setOut(JSON.stringify(await r.json(), null, 2));
+        } catch(e:any) {
+          setErr(e?.message || "Analyze failed");
+        } finally {
+          setBusy(false);
+        }
+      }}>{busy ? "Analyzing…" : "Analyze"}</button>
+      {err && <p className="text-red-300 mt-3">{err}</p>}
+      {out && <pre className="mt-3 text-xs bg-black/60 p-3 rounded max-h-80 overflow-auto">{out}</pre>}
+    </div>
   );
 }
