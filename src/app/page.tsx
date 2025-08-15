@@ -1,11 +1,10 @@
-// src/app/page.tsx
 "use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { setAuthToken } from "@/lib/auth";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE!; // no trailing slash
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE!; // e.g., https://caio-backend.onrender.com
 
 export default function LoginPage() {
   const router = useRouter();
@@ -16,7 +15,9 @@ export default function LoginPage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true); setError(null);
+    setBusy(true);
+    setError(null);
+
     try {
       const res = await fetch(`${API_BASE}/api/login`, {
         method: "POST",
@@ -29,7 +30,11 @@ export default function LoginPage() {
       }
       const data = await res.json();
       if (!data?.access_token) throw new Error("No access_token in response");
+
+      // persist for middleware + client
       setAuthToken(data.access_token);
+
+      // hard redirect to ensure middleware runs immediately
       router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Login failed");
@@ -40,7 +45,7 @@ export default function LoginPage() {
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-black text-white p-6">
-      <form onSubmit={onSubmit} className="w-full max-w-md bg-white/10 p-6 rounded-xl backdrop-blur">
+      <form onSubmit={onSubmit} className="w-full max-w-md bg-white/10 p-6 rounded-xl">
         <h1 className="text-2xl mb-4">Log in to CAIO</h1>
         <label className="block mb-2 text-sm">Email</label>
         <input className="w-full mb-4 p-2 rounded text-black" type="email" required
