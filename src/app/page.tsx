@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { getAuthToken } from "@/lib/auth";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE!; // e.g., https://caio-backend.onrender.com
@@ -17,10 +16,7 @@ type Me = {
 function withTimeout<T>(p: Promise<T>, ms = 12000): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
-    p.then(
-      v => { clearTimeout(t); resolve(v); },
-      e => { clearTimeout(t); reject(e); }
-    );
+    p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
   });
 }
 
@@ -101,20 +97,12 @@ export default function DashboardPage() {
         <header className="bg-white/10 p-6 rounded-xl">
           <h1 className="text-2xl mb-1">Welcome to CAIO</h1>
           <p className="opacity-80">
-            Logged in as <b>{me?.email}</b> • {me?.is_admin ? "Admin" : "User"} • {me?.is_paid ? "Pro" : "Demo"}
+            Logged in as <b>{me?.email}</b> • {me?.is_admin ? "Admin" : "User"} •{" "}
+            {me?.is_paid ? "Pro" : "Demo"}
           </p>
-
-          {/* ✅ Upgrade link lives INSIDE the component now */}
-          {!me?.is_paid && (
-            <p className="mt-2">
-              <Link href="/payments" className="underline text-blue-300">
-                Upgrade to Pro
-              </Link>
-            </p>
-          )}
         </header>
 
-        {/* Quick analyze scaffold */}
+        {/* Quick analyze scaffold so you can verify end‑to‑end */}
         <section className="bg-white/10 p-6 rounded-xl space-y-4">
           <h2 className="text-xl">Analyze (quick test)</h2>
           <QuickAnalyze />
