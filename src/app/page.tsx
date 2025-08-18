@@ -1,64 +1,187 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { setAuthToken } from "@/lib/auth";
+import Link from "next/link";
+import { getAuthToken } from "@/lib/auth";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE!; // e.g., https://caio-backend.onrender.com
 
-export default function LoginPage() {
+type Me = {
+  email: string;
+  is_admin: boolean;
+  is_paid: boolean;
+  created_at?: string;
+};
+
+function withTimeout<T>(p: Promise<T>, ms = 12000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
+    p.then(
+      v => { clearTimeout(t); resolve(v); },
+      e => { clearTimeout(t); reject(e); }
+    );
+  });
+}
+
+export default function DashboardPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(true);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
+  const token = useMemo(() => getAuthToken(), []);
 
-    try {
-      const res = await fetch(`${API_BASE}/api/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ username: email, password }),
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`Login failed (${res.status}): ${txt}`);
+  useEffect(() => {
+    async function load() {
+      if (!token) {
+        router.push("/");
+        return;
       }
-      const data = await res.json();
-      if (!data?.access_token) throw new Error("No access_token in response");
+      try {
+        setBusy(true);
+        setError(null);
 
-      // persist for middleware + client
-      setAuthToken(data.access_token);
+        const res = await withTimeout(
+          fetch(`${API_BASE}/api/profile`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          12000
+        );
 
-      // hard redirect to ensure middleware runs immediately
-      router.push("/dashboard");
-    } catch (err: any) {
-      setError(err.message || "Login failed");
+        if (!res.ok) {
+          const txt = await res.text().catch(() => "");
+          throw new Error(`Profile ${res.status}: ${txt || res.statusText}`);
+        }
+
+        const j = await res.json();
+        setMe({
+          email: j.email,
+          is_admin: !!j.is_admin,
+          is_paid: !!j.is_paid,
+          created_at: j.created_at,
+        });
+      } catch (e: any) {
+        setError(e?.message || "Failed to load profile");
+      } finally {
+        setBusy(false);
+      }
+    }
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (busy) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-black text-white">
+        <div className="opacity-80">Loading…</div>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-black text-white p-6">
+        <div className="max-w-xl w-full bg-white/10 p-6 rounded-xl">
+          <h1 className="text-xl mb-2">Dashboard</h1>
+          <p className="text-red-300 mb-3">Error: {error}</p>
+          <ul className="text-sm opacity-80 list-disc pl-5 space-y-1">
+            <li>Check <code>NEXT_PUBLIC_API_BASE</code> is set on Vercel/Netlify to <code>{API_BASE}</code>.</li>
+            <li>Backend must allow this origin in <code>ALLOWED_ORIGINS</code>.</li>
+            <li>Make sure your login succeeded and you have a valid token.</li>
+          </ul>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen p-6 bg-black text-white">
+      <div className="max-w-3xl mx-auto space-y-6">
+        <header className="bg-white/10 p-6 rounded-xl">
+          <h1 className="text-2xl mb-1">Welcome to CAIO</h1>
+          <p className="opacity-80">
+            Logged in as <b>{me?.email}</b> • {me?.is_admin ? "Admin" : "User"} • {me?.is_paid ? "Pro" : "Demo"}
+          </p>
+
+          {/* ✅ Upgrade link lives INSIDE the component now */}
+          {!me?.is_paid && (
+            <p className="mt-2">
+              <Link href="/payments" className="underline text-blue-300">
+                Upgrade to Pro
+              </Link>
+            </p>
+          )}
+        </header>
+
+        {/* Quick analyze scaffold */}
+        <section className="bg-white/10 p-6 rounded-xl space-y-4">
+          <h2 className="text-xl">Analyze (quick test)</h2>
+          <QuickAnalyze />
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function QuickAnalyze() {
+  const [text, setText] = useState("");
+  const [out, setOut] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const token = getAuthToken();
+  const API_BASE = process.env.NEXT_PUBLIC_API_BASE!;
+
+  async function run() {
+    setBusy(true); setErr(null); setOut(null);
+    try {
+      if (!token) throw new Error("No token");
+      const fd = new FormData();
+      if (text.trim()) fd.append("text", text.trim());
+      else throw new Error("Enter some text to analyze.");
+
+      const res = await withTimeout(
+        fetch(`${API_BASE}/api/analyze`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: fd,
+        }),
+        20000
+      );
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Analyze ${res.status}: ${txt || res.statusText}`);
+      }
+      const j = await res.json();
+      setOut(JSON.stringify(j, null, 2));
+    } catch (e: any) {
+      setErr(e?.message || "Analyze failed");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-black text-white p-6">
-      <form onSubmit={onSubmit} className="w-full max-w-md bg-white/10 p-6 rounded-xl">
-        <h1 className="text-2xl mb-4">Log in to CAIO</h1>
-        <label className="block mb-2 text-sm">Email</label>
-        <input className="w-full mb-4 p-2 rounded text-black" type="email" required
-               value={email} onChange={(e)=>setEmail(e.target.value)} />
-        <label className="block mb-2 text-sm">Password</label>
-        <input className="w-full mb-6 p-2 rounded text-black" type="password" required
-               value={password} onChange={(e)=>setPassword(e.target.value)} />
-        {error && <p className="text-red-300 text-sm mb-3">{error}</p>}
-        <button disabled={busy} className="w-full py-2 rounded bg-blue-600 disabled:opacity-60">
-          {busy ? "Logging in..." : "Log in"}
-        </button>
-        <p className="text-xs mt-3 opacity-70">API: {API_BASE}</p>
-      </form>
-    </main>
+    <div>
+      <textarea
+        className="w-full h-28 p-2 rounded text-black"
+        placeholder="Paste a short business note to test..."
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+      <button
+        onClick={run}
+        disabled={busy}
+        className="mt-3 px-4 py-2 rounded bg-blue-600 disabled:opacity-60"
+      >
+        {busy ? "Analyzing…" : "Analyze"}
+      </button>
+      {err && <p className="text-red-300 mt-3">{err}</p>}
+      {out && (
+        <pre className="mt-3 bg-black/60 p-3 rounded max-h-80 overflow-auto text-xs">
+          {out}
+        </pre>
+      )}
+    </div>
   );
 }
