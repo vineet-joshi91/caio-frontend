@@ -18,8 +18,8 @@ function withTimeout<T>(p: Promise<T>, ms = 12000): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
     p.then(
-      (v) => { clearTimeout(t); resolve(v); },
-      (e) => { clearTimeout(t); reject(e); }
+      v => { clearTimeout(t); resolve(v); },
+      e => { clearTimeout(t); reject(e); }
     );
   });
 }
@@ -33,9 +33,9 @@ export default function DashboardPage() {
   const token = useMemo(() => getAuthToken(), []);
 
   useEffect(() => {
-    (async () => {
+    async function load() {
       if (!token) {
-        router.push("/"); // no token → go to login
+        router.push("/");
         return;
       }
       try {
@@ -66,24 +66,10 @@ export default function DashboardPage() {
       } finally {
         setBusy(false);
       }
-    })();
+    }
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  function logout() {
-    try {
-      // clear cookie + localStorage token
-      document.cookie = "token=; path=/; max-age=0; SameSite=Lax";
-      try { localStorage.removeItem("token"); } catch {}
-    } catch {}
-    router.push("/"); // back to login
-  }
-
-  function refreshStatus() {
-    router.refresh(); // light refresh
-    // fallback full reload if needed:
-    // window.location.reload();
-  }
 
   if (busy) {
     return (
@@ -100,15 +86,10 @@ export default function DashboardPage() {
           <h1 className="text-xl mb-2">Dashboard</h1>
           <p className="text-red-300 mb-3">Error: {error}</p>
           <ul className="text-sm opacity-80 list-disc pl-5 space-y-1">
-            <li>Check <code>NEXT_PUBLIC_API_BASE</code> is set to <code>{API_BASE}</code> on your host.</li>
+            <li>Check <code>NEXT_PUBLIC_API_BASE</code> is set on Vercel/Netlify to <code>{API_BASE}</code>.</li>
             <li>Backend must allow this origin in <code>ALLOWED_ORIGINS</code>.</li>
-            <li>Log in again if your token expired/rotated.</li>
+            <li>Make sure your login succeeded and you have a valid token.</li>
           </ul>
-          <div className="mt-3 flex gap-2">
-            <button onClick={logout} className="px-3 py-1 rounded bg-red-600 hover:bg-red-500 text-sm">
-              Logout
-            </button>
-          </div>
         </div>
       </main>
     );
@@ -123,22 +104,17 @@ export default function DashboardPage() {
             Logged in as <b>{me?.email}</b> • {me?.is_admin ? "Admin" : "User"} • {me?.is_paid ? "Pro" : "Demo"}
           </p>
 
-          <div className="mt-3 flex gap-2">
-            {!me?.is_paid && (
+          {/* ✅ Upgrade link lives INSIDE the component now */}
+          {!me?.is_paid && (
+            <p className="mt-2">
               <Link href="/payments" className="underline text-blue-300">
                 Upgrade to Pro
               </Link>
-            )}
-            <button onClick={refreshStatus} className="px-3 py-1 rounded bg-neutral-700 hover:bg-neutral-600 text-sm">
-              Refresh status
-            </button>
-            <button onClick={logout} className="px-3 py-1 rounded bg-red-600 hover:bg-red-500 text-sm">
-              Logout
-            </button>
-          </div>
+            </p>
+          )}
         </header>
 
-        {/* Quick analyze scaffold so you can verify end-to-end */}
+        {/* Quick analyze scaffold */}
         <section className="bg-white/10 p-6 rounded-xl space-y-4">
           <h2 className="text-xl">Analyze (quick test)</h2>
           <QuickAnalyze />
