@@ -1,171 +1,82 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-/**
- * Full signup page wired to your FastAPI backend.
- * Your backend endpoint expects email & password as QUERY params,
- * so we send them in the URL, not as JSON.
- *
- * Make sure NEXT_PUBLIC_API_BASE is set (e.g. https://caio-backend.onrender.com)
- */
-export default function Signup() {
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE!; // e.g. https://caio-backend.onrender.com
+
+export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [pw, setPw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  const API = process.env.NEXT_PUBLIC_API_BASE || "";
-
-  const handleSignup = async (e: React.FormEvent) => {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setMessage("");
-    setLoading(true);
-
+    setErr(null);
+    setBusy(true);
     try {
-      // Your FastAPI route:
-      // @app.post("/api/signup")
-      // def signup(email: str, password: str, ...)
-      //
-      // Because the backend parameters are plain `str` (not Form/Body),
-      // FastAPI reads them from the QUERY STRING.
-      const url = `${API}/api/signup?email=${encodeURIComponent(
-        email.trim()
-      )}&password=${encodeURIComponent(password.trim())}`;
+      // OAuth2 form-encoded: username/password
+      const body = new URLSearchParams();
+      body.set("username", email.trim());
+      body.set("password", pw);
 
-      const res = await fetch(url, { method: "POST" });
+      const res = await fetch(`${API_BASE}/api/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setMessage(err.detail || "Signup failed. Try a different email.");
-        setLoading(false);
-        return;
-      }
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || res.statusText);
+      const j = JSON.parse(text);
 
-      // If we get here, it worked
-      setMessage("Signup successful! You can now log in.");
-      // small pause so user sees the message, then go to login
-      setTimeout(() => router.push("/"), 1200);
-    } catch {
-      setMessage("Network error. Please try again.");
+      const token = j.access_token as string;
+      if (!token) throw new Error("No access_token in response");
+
+      // save both cookie and localStorage so getAuthToken() finds it
+      document.cookie = `token=${encodeURIComponent(token)}; path=/; SameSite=Lax`;
+      try { localStorage.setItem("token", token); } catch {}
+
+      router.push("/dashboard");
+    } catch (e: any) {
+      setErr(e?.message || "Login failed");
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
-  };
+  }
 
   return (
-    <div
-      style={{
-        maxWidth: 420,
-        margin: "60px auto",
-        background: "#fff",
-        padding: 32,
-        borderRadius: 10,
-        boxShadow: "0 0 18px #e9ecef",
-      }}
-    >
-      <h1
-        style={{
-          textAlign: "center",
-          fontSize: "2.1em",
-          letterSpacing: "1.2px",
-          color: "#154272",
-          marginBottom: 7,
-        }}
-      >
-        Sign Up
-      </h1>
-      <div
-        style={{
-          textAlign: "center",
-          fontSize: "1.02em",
-          color: "#375074",
-          marginBottom: 23,
-          letterSpacing: ".3px",
-        }}
-      >
-        Create your CAIO account
-      </div>
-
-      <form onSubmit={handleSignup}>
-        <label style={{ fontWeight: 600 }}>Email</label>
+    <main className="min-h-screen flex items-center justify-center bg-black text-white p-6">
+      <form onSubmit={onSubmit} className="bg-white/10 p-6 rounded-xl w-full max-w-sm space-y-4">
+        <h1 className="text-2xl">Log in to CAIO</h1>
         <input
           type="email"
           value={email}
-          autoComplete="email"
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="your@email.com"
+          placeholder="Email address"
+          className="w-full p-2 rounded text-black"
           required
-          style={{
-            width: "100%",
-            padding: "10px 8px",
-            margin: "7px 0 14px 0",
-            borderRadius: 4,
-            border: "1px solid #d5dbe3",
-            fontSize: "1.07em",
-          }}
         />
-
-        <label style={{ fontWeight: 600 }}>Password</label>
         <input
           type="password"
-          value={password}
-          autoComplete="new-password"
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Choose a password"
+          value={pw}
+          onChange={(e) => setPw(e.target.value)}
+          placeholder="Password"
+          className="w-full p-2 rounded text-black"
           required
-          style={{
-            width: "100%",
-            padding: "10px 8px",
-            margin: "7px 0 18px 0",
-            borderRadius: 4,
-            border: "1px solid #d5dbe3",
-            fontSize: "1.07em",
-          }}
         />
-
         <button
           type="submit"
-          disabled={loading}
-          style={{
-            width: "100%",
-            padding: 13,
-            background: loading ? "#6c87a3" : "#154272",
-            cursor: loading ? "not-allowed" : "pointer",
-            color: "#fff",
-            border: "none",
-            borderRadius: 4,
-            fontWeight: 700,
-            fontSize: "1.09em",
-            letterSpacing: ".5px",
-            marginTop: 6,
-          }}
+          disabled={busy}
+          className="w-full p-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-60"
         >
-          {loading ? "Creating account..." : "Sign Up"}
+          {busy ? "Signing in…" : "Sign in"}
         </button>
-
-        {message && (
-          <div
-            style={{
-              marginTop: 18,
-              color: message.toLowerCase().includes("failed") ? "crimson" : "#13706a",
-              fontWeight: 600,
-              textAlign: "center",
-            }}
-          >
-            {message}
-          </div>
-        )}
+        {err && <p className="text-red-300 text-sm">{err}</p>}
+        <p className="text-xs opacity-70">API: {API_BASE}</p>
       </form>
-
-      <div style={{ textAlign: "center", marginTop: 18 }}>
-        Already have an account?{" "}
-        <a href="/" style={{ color: "#154272", fontWeight: 600 }}>
-          Go to Login
-        </a>
-      </div>
-    </div>
+    </main>
   );
 }

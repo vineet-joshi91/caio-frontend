@@ -1,6 +1,7 @@
 "use client";
 
 import Script from "next/script";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "(missing)";
@@ -33,7 +34,7 @@ export default function PaymentsPage() {
 
   useEffect(() => {
     (async () => {
-      if (!token) { setErr("No token — please log in again."); return; }
+      if (!token) return; // handled by UI branch below
       if (API_BASE === "(missing)") { setErr("NEXT_PUBLIC_API_BASE is missing."); return; }
       const r = await fetchWithDetail(`${API_BASE}/api/profile`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -46,18 +47,34 @@ export default function PaymentsPage() {
     })();
   }, [token]);
 
+  // Not logged in
+  if (!token) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-black text-white p-6">
+        <div className="bg-white/10 p-6 rounded-xl text-center">
+          <h1 className="text-2xl mb-2">Upgrade your CAIO plan</h1>
+          <p className="opacity-80 mb-4">You’re not logged in.</p>
+          <Link href="/signup" className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500">Go to Login</Link>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen p-6 bg-black text-white">
       <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="afterInteractive" />
       <div className="max-w-3xl mx-auto space-y-6">
         <header className="bg-white/10 p-6 rounded-xl">
-          <h1 className="text-2xl mb-1">Upgrade your CAIO plan</h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl">Upgrade your CAIO plan</h1>
+            <Link href="/dashboard" className="text-sm underline text-blue-300">Back to dashboard</Link>
+          </div>
           {me ? (
-            <p className="opacity-80">
+            <p className="opacity-80 mt-1">
               Logged in as <b>{me.email}</b> • {me.is_paid ? "Pro" : "Demo"}
             </p>
           ) : (
-            <p className="text-red-300">{err || "Loading..."}</p>
+            <p className="text-red-300 mt-1">{err || "Loading..."}</p>
           )}
         </header>
 

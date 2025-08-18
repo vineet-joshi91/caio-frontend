@@ -1,95 +1,68 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { getAuthToken } from "@/lib/auth";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE!;
-const LOGIN_URL = process.env.NEXT_PUBLIC_LOGIN_URL || "/signup"; // <— use /signup by default
 
 type Me = { email: string; is_admin: boolean; is_paid: boolean; created_at?: string; };
 
-function withTimeout<T>(p: Promise<T>, ms = 12000): Promise<T> {
-  return new Promise((resolve, reject) => {
+function withTimeout<T>(p: Promise<T>, ms = 12000) {
+  return new Promise<T>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
-    p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+    p.then(v => { clearTimeout(t); resolve(v as T); }, e => { clearTimeout(t); reject(e); });
   });
 }
 
-export default function DashboardPage() {
-  const router = useRouter();
-  const [me, setMe] = useState<Me | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(true);
-
+export default function RootPage() {
   const token = useMemo(() => getAuthToken(), []);
+  const [me, setMe] = useState<Me | null>(null);
+  const [busy, setBusy] = useState(!!token);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
-      if (!token) { setBusy(false); return; }
+      if (!token) return;
       try {
-        setBusy(true); setError(null);
-        const res = await withTimeout(
-          fetch(`${API_BASE}/api/profile`, { headers: { Authorization: `Bearer ${token}` } }),
-          12000
-        );
-        if (!res.ok) {
-          const txt = await res.text().catch(() => "");
-          throw new Error(`Profile ${res.status}: ${txt || res.statusText}`);
-        }
+        const res = await withTimeout(fetch(`${API_BASE}/api/profile`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }), 12000);
+        if (!res.ok) throw new Error(await res.text());
         const j = await res.json();
         setMe({ email: j.email, is_admin: !!j.is_admin, is_paid: !!j.is_paid, created_at: j.created_at });
       } catch (e: any) {
-        setError(e?.message || "Failed to load profile");
+        setErr(e?.message || "Failed to load profile");
       } finally {
         setBusy(false);
       }
     })();
   }, [token]);
 
-  function logout() {
-    try {
-      document.cookie = "token=; path=/; max-age=0; SameSite=Lax";
-      try { localStorage.removeItem("token"); } catch {}
-    } catch {}
-    // same-tab redirect to your Netlify site
-    window.location.assign("https://caioai.netlify.app");
-  }
-
-  function refreshStatus() { router.refresh(); }
-
-  if (busy) {
-    return <main className="min-h-screen flex items-center justify-center bg-black text-white"> <div className="opacity-80">Loading…</div> </main>;
-  }
-
-  // Not logged in → show a working login button
   if (!token) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-black text-white p-6">
         <div className="bg-white/10 p-6 rounded-xl text-center">
           <h1 className="text-2xl mb-2">Welcome to CAIO</h1>
           <p className="opacity-80 mb-4">You’re not logged in.</p>
-          {/* if LOGIN_URL is external, use <a>; if internal, Link works */}
-          {LOGIN_URL.startsWith("http") ? (
-            <a href={LOGIN_URL} className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500">Go to Login</a>
-          ) : (
-            <Link href={LOGIN_URL} className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500">Go to Login</Link>
-          )}
+          <Link href="/signup" className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500">Go to Login</Link>
         </div>
       </main>
     );
   }
 
-  if (error) {
+  if (busy) {
+    return <main className="min-h-screen flex items-center justify-center bg-black text-white">Loading…</main>;
+  }
+
+  if (err) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-black text-white p-6">
-        <div className="max-w-xl w-full bg-white/10 p-6 rounded-xl">
-          <h1 className="text-xl mb-2">Dashboard</h1>
-          <p className="text-red-300 mb-3">Error: {error}</p>
-          <div className="mt-3 flex gap-2">
-            <button onClick={refreshStatus} className="px-3 py-1 rounded bg-neutral-700 hover:bg-neutral-600 text-sm">Retry</button>
-            <button onClick={logout} className="px-3 py-1 rounded bg-red-600 hover:bg-red-500 text-sm">Logout</button>
+        <div className="bg-white/10 p-6 rounded-xl">
+          <h1 className="text-xl mb-2">Welcome to CAIO</h1>
+          <p className="text-red-300">Error: {err}</p>
+          <div className="mt-3">
+            <Link href="/signup" className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500">Re-login</Link>
           </div>
         </div>
       </main>
@@ -106,8 +79,7 @@ export default function DashboardPage() {
           </p>
           <div className="mt-3 flex gap-2">
             {!me?.is_paid && <Link href="/payments" className="underline text-blue-300">Upgrade to Pro</Link>}
-            <button onClick={refreshStatus} className="px-3 py-1 rounded bg-neutral-700 hover:bg-neutral-600 text-sm">Refresh status</button>
-            <button onClick={logout} className="px-3 py-1 rounded bg-red-600 hover:bg-red-500 text-sm">Logout</button>
+            <Link href="/dashboard" className="px-3 py-1 rounded bg-neutral-700 hover:bg-neutral-600 text-sm">Open dashboard</Link>
           </div>
         </header>
       </div>
