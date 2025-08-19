@@ -36,9 +36,7 @@ export default function DashboardPage() {
         const res = await withTimeout(fetch(`${API_BASE}/api/profile`, {
           headers: { Authorization: `Bearer ${token}` },
         }), 12000);
-        if (!res.ok) {
-          throw new Error("Couldn’t load your profile. Please log in again.");
-        }
+        if (!res.ok) throw new Error("Couldn’t load your profile. Please log in again.");
         const j = await res.json();
         setMe({ email: j.email, is_admin: !!j.is_admin, is_paid: !!j.is_paid, created_at: j.created_at });
       } catch (e: any) {
@@ -54,7 +52,7 @@ export default function DashboardPage() {
       document.cookie = "token=; path=/; max-age=0; SameSite=Lax";
       try { localStorage.removeItem("token"); } catch {}
     } catch {}
-    window.location.assign(NETLIFY_HOME); // same tab
+    window.location.assign(NETLIFY_HOME);
   }
 
   if (!token) {
@@ -132,13 +130,20 @@ export default function DashboardPage() {
   );
 }
 
-/* ==== Analyze Card with Drag-and-Drop (no internal URLs shown) ==== */
+/* ================= Analyze Card (drag & drop + pretty result UI) ================= */
 function AnalyzeCard({ token }: { token: string }) {
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [out, setOut] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Pretty result model
+  type Result =
+    | { status: "demo"; title: string; summary: string; tip?: string }
+    | { status: "error"; title: string; message: string; action?: string }
+    | { status?: string; title?: string; summary?: string; [k: string]: any };
+
+  const [result, setResult] = useState<Result | null>(null);
+  const [friendlyErr, setFriendlyErr] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -163,9 +168,8 @@ function AnalyzeCard({ token }: { token: string }) {
   }
 
   async function run() {
-    setBusy(true); setErr(null); setOut(null);
+    setBusy(true); setFriendlyErr(null); setResult(null);
     try {
-      if (!token) throw new Error("Please log in again.");
       const fd = new FormData();
       if (text.trim()) fd.append("text", text.trim());
       if (file) fd.append("file", file);
@@ -177,14 +181,38 @@ function AnalyzeCard({ token }: { token: string }) {
         body: fd,
       }), 30000);
 
+      const raw = await res.text();
+      let parsed: any = {};
+      try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
+
       if (!res.ok) {
-        // show friendly message without exposing backend details
-        throw new Error("Analyze failed. Please try again in a moment.");
+        // Expecting a friendly error shape from backend; otherwise fall back to generic
+        const title = parsed?.title || "Analysis Unavailable";
+        const message = parsed?.message || "Something went wrong while analyzing your request.";
+        const action = parsed?.action || "Please try again in a moment.";
+        setResult({ status: "error", title, message, action });
+        return;
       }
-      const j = await res.json();
-      setOut(JSON.stringify(j, null, 2));
+
+      // Demo or Success
+      if (parsed?.status === "demo") {
+        setResult({
+          status: "demo",
+          title: parsed.title || "Demo Mode Result",
+          summary: parsed.summary || "This is a sample analysis.",
+          tip: parsed.tip,
+        });
+      } else {
+        // Generic success payload (if you later return real results)
+        setResult({
+          status: parsed.status || "ok",
+          title: parsed.title || "Analysis Result",
+          summary: parsed.summary || "Your analysis completed successfully.",
+          ...parsed,
+        });
+      }
     } catch (e: any) {
-      setErr(e?.message || "Something went wrong. Please try again.");
+      setFriendlyErr(e?.message || "Something went wrong. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -206,7 +234,7 @@ function AnalyzeCard({ token }: { token: string }) {
           <svg width="28" height="28" viewBox="0 0 24 24" className="opacity-80">
             <path fill="currentColor" d="M19 12v7H5v-7H3v9h18v-9zM11 2h2v10h3l-4 4l-4-4h3z"/>
           </svg>
-        <p className="opacity-85">Drag & drop a document here</p>
+          <p className="opacity-85">Drag & drop a document here</p>
           <p className="text-xs opacity-60">PDF, DOCX, TXT…</p>
           <button
             type="button"
@@ -260,19 +288,45 @@ function AnalyzeCard({ token }: { token: string }) {
         >
           {busy ? "Analyzing…" : "Analyze"}
         </button>
-        {!false && ( // keep a subtle upsell without exposing details
-          <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
-            Need full features? Upgrade
-          </Link>
-        )}
+        <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
+          Need full features? Upgrade
+        </Link>
       </div>
 
-      {/* Output */}
-      {err && <p className="text-red-300">{err}</p>}
-      {out && (
-        <pre className="mt-3 bg-zinc-950/70 p-4 rounded-xl max-h-[28rem] overflow-auto text-xs leading-relaxed border border-zinc-800">
-          {out}
-        </pre>
+      {/* Friendly network error (not API-provided) */}
+      {friendlyErr && (
+        <div className="mt-3 p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-200">
+          <h3 className="font-semibold mb-1">We hit a snag</h3>
+          <p className="text-sm">{friendlyErr}</p>
+        </div>
+      )}
+
+      {/* Pretty result UI */}
+      {result && (
+        <div className="mt-3">
+          {result.status === "error" ? (
+            <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-200">
+              <h3 className="font-semibold">{result.title || "Analysis Unavailable"}</h3>
+              <p className="text-sm mt-1">{result.message || "Please try again later."}</p>
+              {("action" in result) && result.action && (
+                <p className="text-xs opacity-80 mt-2 italic">{result.action}</p>
+              )}
+            </div>
+          ) : result.status === "demo" ? (
+            <div className="p-4 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-200">
+              <h3 className="font-semibold">{result.title || "Demo Mode Result"}</h3>
+              <p className="text-sm mt-1">{result.summary || "This is a sample analysis."}</p>
+              {("tip" in result) && result.tip && (
+                <p className="text-xs opacity-80 mt-2 italic">{result.tip}</p>
+              )}
+            </div>
+          ) : (
+            <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100">
+              <h3 className="font-semibold">{result.title || "Analysis Result"}</h3>
+              <p className="text-sm mt-1">{result.summary || "Your analysis completed successfully."}</p>
+            </div>
+          )}
+        </div>
       )}
     </section>
   );
