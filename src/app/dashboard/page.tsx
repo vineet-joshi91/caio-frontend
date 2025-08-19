@@ -136,11 +136,11 @@ function AnalyzeCard({ token }: { token: string }) {
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Pretty result model
+  // Discriminated union with "ok" for success cases
   type Result =
     | { status: "demo"; title: string; summary: string; tip?: string }
     | { status: "error"; title: string; message: string; action?: string }
-    | { status?: string; title?: string; summary?: string; [k: string]: any };
+    | { status: "ok"; title?: string; summary?: string; [k: string]: any };
 
   const [result, setResult] = useState<Result | null>(null);
   const [friendlyErr, setFriendlyErr] = useState<string | null>(null);
@@ -148,24 +148,11 @@ function AnalyzeCard({ token }: { token: string }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
-  function onBrowseClick() {
-    fileInputRef.current?.click();
-  }
-  function onFileChosen(f: File | undefined | null) {
-    if (!f) return;
-    setFile(f);
-  }
-  function onDragOver(e: React.DragEvent) {
-    e.preventDefault(); e.stopPropagation(); setDragActive(true);
-  }
-  function onDragLeave(e: React.DragEvent) {
-    e.preventDefault(); e.stopPropagation(); setDragActive(false);
-  }
-  function onDrop(e: React.DragEvent) {
-    e.preventDefault(); e.stopPropagation(); setDragActive(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) setFile(f);
-  }
+  function onBrowseClick() { fileInputRef.current?.click(); }
+  function onFileChosen(f: File | undefined | null) { if (f) setFile(f); }
+  function onDragOver(e: React.DragEvent) { e.preventDefault(); e.stopPropagation(); setDragActive(true); }
+  function onDragLeave(e: React.DragEvent) { e.preventDefault(); e.stopPropagation(); setDragActive(false); }
+  function onDrop(e: React.DragEvent) { e.preventDefault(); e.stopPropagation(); setDragActive(false); const f = e.dataTransfer.files?.[0]; if (f) setFile(f); }
 
   async function run() {
     setBusy(true); setFriendlyErr(null); setResult(null);
@@ -186,7 +173,6 @@ function AnalyzeCard({ token }: { token: string }) {
       try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
 
       if (!res.ok) {
-        // Expecting a friendly error shape from backend; otherwise fall back to generic
         const title = parsed?.title || "Analysis Unavailable";
         const message = parsed?.message || "Something went wrong while analyzing your request.";
         const action = parsed?.action || "Please try again in a moment.";
@@ -194,7 +180,6 @@ function AnalyzeCard({ token }: { token: string }) {
         return;
       }
 
-      // Demo or Success
       if (parsed?.status === "demo") {
         setResult({
           status: "demo",
@@ -203,9 +188,9 @@ function AnalyzeCard({ token }: { token: string }) {
           tip: parsed.tip,
         });
       } else {
-        // Generic success payload (if you later return real results)
+        // SUCCESS (generic / future real engines)
         setResult({
-          status: parsed.status || "ok",
+          status: "ok",
           title: parsed.title || "Analysis Result",
           summary: parsed.summary || "Your analysis completed successfully.",
           ...parsed,
@@ -293,7 +278,7 @@ function AnalyzeCard({ token }: { token: string }) {
         </Link>
       </div>
 
-      {/* Friendly network error (not API-provided) */}
+      {/* Friendly network error */}
       {friendlyErr && (
         <div className="mt-3 p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-200">
           <h3 className="font-semibold mb-1">We hit a snag</h3>
@@ -308,7 +293,7 @@ function AnalyzeCard({ token }: { token: string }) {
             <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-200">
               <h3 className="font-semibold">{result.title || "Analysis Unavailable"}</h3>
               <p className="text-sm mt-1">{result.message || "Please try again later."}</p>
-              {("action" in result) && result.action && (
+              {"action" in result && result.action && (
                 <p className="text-xs opacity-80 mt-2 italic">{result.action}</p>
               )}
             </div>
@@ -316,7 +301,7 @@ function AnalyzeCard({ token }: { token: string }) {
             <div className="p-4 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-200">
               <h3 className="font-semibold">{result.title || "Demo Mode Result"}</h3>
               <p className="text-sm mt-1">{result.summary || "This is a sample analysis."}</p>
-              {("tip" in result) && result.tip && (
+              {"tip" in result && result.tip && (
                 <p className="text-xs opacity-80 mt-2 italic">{result.tip}</p>
               )}
             </div>
