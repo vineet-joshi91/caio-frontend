@@ -37,13 +37,12 @@ export default function DashboardPage() {
           headers: { Authorization: `Bearer ${token}` },
         }), 12000);
         if (!res.ok) {
-          const txt = await res.text().catch(() => "");
-          throw new Error(`Profile ${res.status}: ${txt || res.statusText}`);
+          throw new Error("Couldn’t load your profile. Please log in again.");
         }
         const j = await res.json();
         setMe({ email: j.email, is_admin: !!j.is_admin, is_paid: !!j.is_paid, created_at: j.created_at });
       } catch (e: any) {
-        setErr(e?.message || "Failed to load profile");
+        setErr(e?.message || "Something went wrong.");
       } finally {
         setBusy(false);
       }
@@ -60,8 +59,8 @@ export default function DashboardPage() {
 
   if (!token) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-gradient-to-b from-black to-zinc-900 text-white p-6">
-        <div className="bg-white/10 p-6 rounded-2xl text-center shadow-xl">
+      <main className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-100 p-6">
+        <div className="bg-zinc-900/70 p-6 rounded-2xl text-center shadow-xl border border-zinc-800">
           <h1 className="text-2xl mb-2">Dashboard</h1>
           <p className="opacity-80 mb-4">You’re not logged in.</p>
           <Link href="/signup" className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500">
@@ -74,7 +73,7 @@ export default function DashboardPage() {
 
   if (busy) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-gradient-to-b from-black to-zinc-900 text-white">
+      <main className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-100">
         <div className="animate-pulse opacity-80">Loading…</div>
       </main>
     );
@@ -82,13 +81,13 @@ export default function DashboardPage() {
 
   if (err) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-gradient-to-b from-black to-zinc-900 text-white p-6">
-        <div className="bg-white/10 p-6 rounded-2xl shadow-xl">
+      <main className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-100 p-6">
+        <div className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800">
           <h1 className="text-xl mb-2">Dashboard</h1>
           <p className="text-red-300">{err}</p>
           <div className="mt-3 flex gap-2">
             <Link href="/signup" className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-sm">Re‑login</Link>
-            <button onClick={() => router.refresh()} className="px-3 py-1 rounded-lg bg-neutral-700 hover:bg-neutral-600 text-sm">Retry</button>
+            <button onClick={() => router.refresh()} className="px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm">Retry</button>
             <button onClick={logout} className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-sm">Logout</button>
           </div>
         </div>
@@ -97,19 +96,19 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="min-h-screen p-6 bg-gradient-to-b from-black to-zinc-900 text-white">
+    <main className="min-h-screen p-6 bg-zinc-950 text-zinc-100">
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Header */}
-        <header className="bg-white/10 backdrop-blur p-6 rounded-2xl shadow-xl border border-white/10">
+        <header className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-semibold">Dashboard</h1>
-              <p className="opacity-80 mt-1">
+              <p className="opacity-85 mt-1">
                 Logged in as <b>{me?.email}</b> • {me?.is_admin ? "Admin" : "User"}
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <span className={`px-2.5 py-1 rounded-full text-xs tracking-wide border ${me?.is_paid ? "bg-emerald-600/20 border-emerald-500/40 text-emerald-200" : "bg-yellow-600/20 border-yellow-500/40 text-yellow-200"}`}>
+              <span className={`px-2.5 py-1 rounded-full text-xs tracking-wide border ${me?.is_paid ? "bg-emerald-500/15 border-emerald-400/40 text-emerald-200" : "bg-amber-500/15 border-amber-400/40 text-amber-200"}`}>
                 {me?.is_paid ? "Pro" : "Demo"}
               </span>
               <button onClick={logout} className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-sm shadow">
@@ -133,7 +132,7 @@ export default function DashboardPage() {
   );
 }
 
-/* ==== Analyze Card with Drag-and-Drop ==== */
+/* ==== Analyze Card with Drag-and-Drop (no internal URLs shown) ==== */
 function AnalyzeCard({ token }: { token: string }) {
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -141,33 +140,24 @@ function AnalyzeCard({ token }: { token: string }) {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const dropRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
   function onBrowseClick() {
     fileInputRef.current?.click();
   }
-
   function onFileChosen(f: File | undefined | null) {
     if (!f) return;
     setFile(f);
   }
-
   function onDragOver(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(true);
+    e.preventDefault(); e.stopPropagation(); setDragActive(true);
   }
   function onDragLeave(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
+    e.preventDefault(); e.stopPropagation(); setDragActive(false);
   }
   function onDrop(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
+    e.preventDefault(); e.stopPropagation(); setDragActive(false);
     const f = e.dataTransfer.files?.[0];
     if (f) setFile(f);
   }
@@ -175,7 +165,7 @@ function AnalyzeCard({ token }: { token: string }) {
   async function run() {
     setBusy(true); setErr(null); setOut(null);
     try {
-      if (!token) throw new Error("No token");
+      if (!token) throw new Error("Please log in again.");
       const fd = new FormData();
       if (text.trim()) fd.append("text", text.trim());
       if (file) fd.append("file", file);
@@ -188,44 +178,40 @@ function AnalyzeCard({ token }: { token: string }) {
       }), 30000);
 
       if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`Analyze ${res.status}: ${txt || res.statusText}`);
+        // show friendly message without exposing backend details
+        throw new Error("Analyze failed. Please try again in a moment.");
       }
       const j = await res.json();
       setOut(JSON.stringify(j, null, 2));
     } catch (e: any) {
-      setErr(e?.message || "Analyze failed");
+      setErr(e?.message || "Something went wrong. Please try again.");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <section className="bg-white/10 backdrop-blur p-6 rounded-2xl shadow-xl border border-white/10 space-y-5">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Quick analyze</h2>
-        <span className="text-xs opacity-70">API: {API_BASE}</span>
-      </div>
+    <section className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800 space-y-5">
+      <h2 className="text-xl font-semibold">Quick analyze</h2>
 
       {/* Dropzone */}
       <div
-        ref={dropRef}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
         className={`rounded-xl border-2 border-dashed p-6 text-sm transition
-          ${dragActive ? "border-blue-400 bg-blue-400/10" : "border-white/20 hover:border-white/40 bg-black/20"}`}
+          ${dragActive ? "border-blue-400 bg-blue-400/10" : "border-zinc-700 hover:border-zinc-500 bg-zinc-950/40"}`}
       >
         <div className="flex flex-col items-center gap-2 text-center">
           <svg width="28" height="28" viewBox="0 0 24 24" className="opacity-80">
             <path fill="currentColor" d="M19 12v7H5v-7H3v9h18v-9zM11 2h2v10h3l-4 4l-4-4h3z"/>
           </svg>
-          <p className="opacity-80">Drag & drop a document here</p>
+        <p className="opacity-85">Drag & drop a document here</p>
           <p className="text-xs opacity-60">PDF, DOCX, TXT…</p>
           <button
             type="button"
             onClick={onBrowseClick}
-            className="mt-2 px-3 py-1.5 rounded-lg bg-neutral-700 hover:bg-neutral-600 text-sm"
+            className="mt-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
           >
             or browse files
           </button>
@@ -240,14 +226,14 @@ function AnalyzeCard({ token }: { token: string }) {
 
       {/* Selected file */}
       {file && (
-        <div className="flex items-center justify-between rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm">
+        <div className="flex items-center justify-between rounded-lg bg-zinc-950/60 border border-zinc-800 px-3 py-2 text-sm">
           <div className="truncate">
-            <span className="opacity-80">{file.name}</span>
-            <span className="opacity-50"> • {(file.size / 1024).toFixed(1)} KB</span>
+            <span className="opacity-90">{file.name}</span>
+            <span className="opacity-60"> • {(file.size / 1024).toFixed(1)} KB</span>
           </div>
           <button
             onClick={() => setFile(null)}
-            className="px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 text-xs"
+            className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-xs"
           >
             Remove
           </button>
@@ -256,9 +242,9 @@ function AnalyzeCard({ token }: { token: string }) {
 
       {/* Prompt */}
       <div className="space-y-2">
-        <label className="text-sm opacity-80">Brief / instructions</label>
+        <label className="text-sm opacity-85">Brief / instructions</label>
         <textarea
-          className="w-full h-28 p-3 rounded-xl text-black"
+          className="w-full h-28 p-3 rounded-xl text-zinc-100 placeholder-zinc-400 bg-zinc-950/60 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
           placeholder="Describe what you want CAIO to analyze…"
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -274,18 +260,17 @@ function AnalyzeCard({ token }: { token: string }) {
         >
           {busy ? "Analyzing…" : "Analyze"}
         </button>
-        <Link
-          href="/payments"
-          className="text-sm underline text-blue-300 hover:text-blue-200"
-        >
-          Need full features? Upgrade
-        </Link>
+        {!false && ( // keep a subtle upsell without exposing details
+          <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
+            Need full features? Upgrade
+          </Link>
+        )}
       </div>
 
       {/* Output */}
       {err && <p className="text-red-300">{err}</p>}
       {out && (
-        <pre className="mt-3 bg-black/60 p-4 rounded-xl max-h-[28rem] overflow-auto text-xs leading-relaxed">
+        <pre className="mt-3 bg-zinc-950/70 p-4 rounded-xl max-h-[28rem] overflow-auto text-xs leading-relaxed border border-zinc-800">
           {out}
         </pre>
       )}
