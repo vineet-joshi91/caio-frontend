@@ -5,9 +5,9 @@ import { useRouter } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
 
-export default function SignupPage() {
+export default function LoginPage() {
   const r = useRouter();
-  const [form, setForm] = useState({ name: "", organisation: "", email: "", password: "" });
+  const [form, setForm] = useState({ email: "", password: "" });
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -20,10 +20,11 @@ export default function SignupPage() {
     e.preventDefault();
     setErr(null); setBusy(true);
     try {
-      const res = await fetch(`${API_BASE}/api/signup`, {
+      const body = new URLSearchParams({ username: form.email, password: form.password });
+      const res = await fetch(`${API_BASE}/api/login`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
@@ -39,13 +40,7 @@ export default function SignupPage() {
   return (
     <main style={wrap}>
       <form onSubmit={submit} style={card}>
-        <h1 style={{margin:"0 0 10px"}}>Create your account</h1>
-        <label style={label}>Name
-          <input required value={form.name} onChange={e=>setForm({...form, name:e.target.value})} style={input} />
-        </label>
-        <label style={label}>Organisation
-          <input value={form.organisation} onChange={e=>setForm({...form, organisation:e.target.value})} style={input} />
-        </label>
+        <h1 style={{margin:"0 0 10px"}}>Log in</h1>
         <label style={label}>Work email
           <input required type="email" value={form.email} onChange={e=>setForm({...form, email:e.target.value})} style={input} />
         </label>
@@ -53,9 +48,9 @@ export default function SignupPage() {
           <input required type="password" value={form.password} onChange={e=>setForm({...form, password:e.target.value})} style={input} />
         </label>
         {err ? <div style={errBox}>{err}</div> : null}
-        <button disabled={busy} type="submit" style={btnPrimary}>{busy ? "Creating..." : "Sign up"}</button>
+        <button disabled={busy} type="submit" style={btnPrimary}>{busy ? "Signing in..." : "Log in"}</button>
         <div style={{marginTop:10, fontSize:13}}>
-          Already have an account? <a href="/login" style={{color:"#93c5fd"}}>Log in</a>
+          New here? <a href="/signup" style={{color:"#93c5fd"}}>Create an account</a>
         </div>
       </form>
     </main>
