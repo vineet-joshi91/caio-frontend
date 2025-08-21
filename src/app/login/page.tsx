@@ -3,10 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-// Hard-default so we never post to Vercel by mistake if the env var is empty
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-backend.onrender.com";
+
+const TIMEOUT_MS = 30000; // 30s for Render cold starts
 
 export default function LoginPage() {
   const r = useRouter();
@@ -20,48 +21,88 @@ export default function LoginPage() {
     localStorage.setItem("token", token);
   }
 
+  function withTimeout<T>(p: Promise<T>, ms = TIMEOUT_MS): Promise<T> {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), ms);
+    // @ts-ignore
+    p.signal = ac.signal;
+    // @ts-ignore
+    return new Promise((resolve, reject) => {
+      fetch; // keep TS happy if it inlines
+    }).catch(() => {}) as any;
+  }
+
+  async function fetchWithTimeout(url: string, init?: RequestInit, ms = TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    try {
+      const res = await fetch(url, { ...init, signal: controller.signal });
+      return res;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function warmUp() {
+    try {
+      await fetchWithTimeout(`${API_BASE}/api/health`, { cache: "no-store" }, 10000);
+    } catch {
+      // ignore; this is just a warmup
+    }
+  }
+
+  async function postLogin(): Promise<{ ok: boolean; data?: any; status?: string; text?: string }> {
+    const url = `${API_BASE}/api/login`;
+    const body = new URLSearchParams({ username: form.email, password: form.password }).toString();
+    try {
+      const res = await fetchWithTimeout(
+        url,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+          cache: "no-store",
+        },
+        TIMEOUT_MS
+      );
+      const text = await res.text();
+      let data: any = {};
+      try { data = text ? JSON.parse(text) : {}; } catch {}
+      setDebug({ url, status: `${res.status} ${res.statusText}`, body: text || "(empty)" });
+      return { ok: res.ok, data, status: `${res.status}`, text };
+    } catch (e: any) {
+      setDebug({ url, status: "timeout/network", body: String(e?.message || e) });
+      return { ok: false, status: "timeout" };
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     setDebug(null);
     setBusy(true);
-
     try {
-      const url = `${API_BASE}/api/login`;
-      const body = new URLSearchParams({ username: form.email, password: form.password }).toString();
+      // 1) Warm up Render (cold start)
+      await warmUp();
 
-      // add a safety timeout so UI doesn’t spin forever
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 12000);
+      // 2) First attempt
+      let resp = await postLogin();
 
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-        cache: "no-store",
-        signal: controller.signal,
-      }).catch((e) => {
-        throw new Error(
-          `Network error (${e?.name === "AbortError" ? "timeout" : "fetch failed"}). ` +
-            `Check CORS or API base.`
-        );
-      });
-      clearTimeout(t);
-
-      const text = await res.text();
-      let data: any = {};
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        /* non-JSON (shouldn’t happen) */
+      // 3) If timeout (likely cold start), wait 2s and retry once
+      if (!resp.ok && resp.status === "timeout") {
+        await new Promise((res) => setTimeout(res, 2000));
+        resp = await postLogin();
       }
-      setDebug({ url, status: `${res.status} ${res.statusText}`, body: text || "(empty)" });
 
-      if (!res.ok) {
-        throw new Error(data?.detail || `HTTP ${res.status}`);
+      if (!resp.ok) {
+        const msg =
+          resp.status === "timeout"
+            ? "Server is waking up. Please try again."
+            : resp?.data?.detail || `Login failed (${resp.status})`;
+        throw new Error(msg);
       }
-      if (data?.access_token) saveToken(data.access_token);
 
+      if (resp.data?.access_token) saveToken(resp.data.access_token);
       r.replace("/dashboard");
     } catch (e: any) {
       setErr(String(e?.message || e));
