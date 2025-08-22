@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
@@ -80,18 +81,12 @@ export default function PaymentsPage() {
         notes: { plan: "pro" },
         theme: { color: "#0ea5e9" },
         handler: function () {
-          // You can hit your backend to mark as paid after webhook confirms.
           window.location.href = "/dashboard?upgraded=1";
         },
-        modal: {
-          ondismiss: function () {
-            // User closed modal
-          }
-        }
+        modal: { ondismiss: function () {} },
       };
 
       if (!window.Razorpay) {
-        // load script once
         await new Promise<void>((resolve, reject) => {
           const s = document.createElement("script");
           s.src = "https://checkout.razorpay.com/v1/checkout.js";
@@ -114,7 +109,14 @@ export default function PaymentsPage() {
   return (
     <main style={wrap}>
       <div style={card}>
-        <h2>Upgrade your CAIO plan</h2>
+        {/* Header with back link */}
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12}}>
+          <h2 style={{margin:0}}>Upgrade your CAIO plan</h2>
+          <Link href="/dashboard" style={backLink} aria-label="Back to dashboard">
+            ← Back to dashboard
+          </Link>
+        </div>
+
         <div style={{opacity:.75, marginBottom:12}}>
           Logged in as <b>{me?.email || "…"}</b>
           {cfg?.mode ? <> • <span>{cfg.mode === "test" ? "Demo" : "Live"}</span></> : null}
@@ -145,7 +147,7 @@ export default function PaymentsPage() {
               <li>Custom integrations</li>
               <li>SLAs & onboarding</li>
             </ul>
-            <a href="/contact" style={btnSecondary}>Contact us</a>
+            <Link href="/contact" style={btnSecondary}>Contact us</Link>
           </div>
         </div>
 
@@ -154,13 +156,13 @@ export default function PaymentsPage() {
             <div><b>We hit a snag</b></div>
             <pre style={pre}>{err}</pre>
             <div style={{marginTop:8}}>
-              Need help? <a href="/contact">Contact support</a> or email <a href="mailto:vineetpjoshi.71@gmail.com">vineetpjoshi.71@gmail.com</a>
+              Need help? <Link href="/contact">Contact support</Link> or email <a href="mailto:vineetpjoshi.71@gmail.com">vineetpjoshi.71@gmail.com</a>
             </div>
           </div>
         ) : null}
 
         <div style={helpBox}>
-          Having trouble with payments? <a href="/contact">Need support</a>
+          Having trouble with payments? <Link href="/contact">Need support</Link>
         </div>
       </div>
     </main>
@@ -177,4 +179,5 @@ const btnPrimary: React.CSSProperties = { display:"inline-block", padding:"10px 
 const btnSecondary: React.CSSProperties = { display:"inline-block", padding:"10px 14px", borderRadius:10, border:"0", background:"#a21caf", color:"#fff", fontWeight:700, textDecoration:"none" };
 const errBox: React.CSSProperties = { marginTop:16, padding:12, borderRadius:10, border:"1px solid #5a3535", background:"#331b1b" };
 const helpBox: React.CSSProperties = { marginTop:14, padding:10, borderRadius:10, border:"1px solid #244055", background:"#0c1526", fontSize:14 };
-const pre: React.CSSProperties = { whiteSpace:"pre-wrap", wordBreak:"break-word", background:"#0d1220", border:"1px solid #23304a", borderRadius:8, padding:10, fontSize:12 };
+const pre: React.CSSProperties = { whiteSpace: "pre-wrap", wordBreak: "break-word", background:"#0d1220", border:"1px solid #23304a", borderRadius:8, padding:10, fontSize:12 };
+const backLink: React.CSSProperties = { fontSize:14, color:"#93c5fd", textDecoration:"none", border:"1px solid #243044", padding:"6px 10px", borderRadius:8, background:"#0f172a" };
