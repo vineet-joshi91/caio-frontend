@@ -14,7 +14,7 @@ declare global {
 }
 
 export default function PaymentsPage() {
-  const [me, setMe] = useState<{ email: string } | null>(null);
+  const [me, setMe] = useState<{ email: string; is_paid?: boolean } | null>(null);
   const [cfg, setCfg] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -23,29 +23,26 @@ export default function PaymentsPage() {
     try {
       const m = document.cookie.match(/(?:^|;\s*)token=([^;]+)/);
       return m ? decodeURIComponent(m[1]) : localStorage.getItem("token");
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   }
 
   useEffect(() => {
     const token = getToken();
-    if (!token) {
-      window.location.href = "/login";
-      return;
-    }
+    if (!token) { window.location.href = "/login"; return; }
 
     (async () => {
       setErr(null);
       try {
+        // Profile (to know if already Pro)
         const pr = await fetch(`${API_BASE}/api/profile`, {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         });
         const pj = await pr.json().catch(() => ({}));
         if (!pr.ok) throw new Error(pj?.detail || `Profile ${pr.status}`);
-        setMe({ email: pj.email });
+        setMe({ email: pj.email, is_paid: !!pj.is_paid });
 
+        // Pricing/config (for showing amount)
         const cr = await fetch(`${API_BASE}/api/payments/config`, { cache: "no-store" });
         const cj = await cr.json().catch(() => ({}));
         if (!cr.ok) throw new Error(cj?.detail || `Config ${cr.status}`);
@@ -57,6 +54,7 @@ export default function PaymentsPage() {
   }, []);
 
   async function upgradePro() {
+    if (me?.is_paid) return; // already Pro — no-op
     const token = getToken();
     if (!token) { window.location.href = "/login"; return; }
     setErr(null); setBusy(true);
@@ -80,9 +78,7 @@ export default function PaymentsPage() {
         prefill: { email: j.email },
         notes: { plan: "pro" },
         theme: { color: "#0ea5e9" },
-        handler: function () {
-          window.location.href = "/dashboard?upgraded=1";
-        },
+        handler: function () { window.location.href = "/dashboard?upgraded=1"; },
         modal: { ondismiss: function () {} },
       };
 
@@ -98,7 +94,6 @@ export default function PaymentsPage() {
 
       const rz = new window.Razorpay(opts);
       rz.open();
-
     } catch (e: any) {
       setErr(String(e.message || e));
     } finally {
@@ -106,21 +101,27 @@ export default function PaymentsPage() {
     }
   }
 
+  const alreadyPro = !!me?.is_paid;
+
   return (
     <main style={wrap}>
       <div style={card}>
         {/* Header with back link */}
         <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12}}>
           <h2 style={{margin:0}}>Upgrade your CAIO plan</h2>
-          <Link href="/dashboard" style={backLink} aria-label="Back to dashboard">
-            ← Back to dashboard
-          </Link>
+          <Link href="/dashboard" style={backLink} aria-label="Back to dashboard">← Back to dashboard</Link>
         </div>
 
         <div style={{opacity:.75, marginBottom:12}}>
           Logged in as <b>{me?.email || "…"}</b>
-          {cfg?.mode ? <> • <span>{cfg.mode === "test" ? "Demo" : "Live"}</span></> : null}
         </div>
+
+        {alreadyPro ? (
+          <div style={infoBox}>
+            You’re already on <b>CAIO Pro</b>. If you need team features, custom workflows, or SLAs,
+            please click <b>Contact us</b> to explore the <b>Premium</b> plan.
+          </div>
+        ) : null}
 
         <div style={grid}>
           <div style={planBox}>
@@ -130,8 +131,14 @@ export default function PaymentsPage() {
               <li>Priority processing</li>
               <li>Email support</li>
             </ul>
-            <button onClick={upgradePro} disabled={busy} style={btnPrimary}>
-              {busy ? "Starting checkout..." : "Upgrade — Pro"}
+            <button
+              onClick={upgradePro}
+              disabled={busy || alreadyPro}
+              aria-disabled={busy || alreadyPro}
+              style={{...btnPrimary, opacity:(busy || alreadyPro) ? .6 : 1, cursor:(busy || alreadyPro) ? "not-allowed" : "pointer"}}
+              title={alreadyPro ? "You already have Pro" : "Upgrade to Pro"}
+            >
+              {alreadyPro ? "Already on Pro" : (busy ? "Starting checkout..." : "Upgrade — Pro")}
             </button>
             {cfg ? (
               <div style={{opacity:.7, fontSize:12, marginTop:6}}>
@@ -175,9 +182,10 @@ const grid: React.CSSProperties = { display:"grid", gridTemplateColumns:"1fr 1fr
 const planBox: React.CSSProperties = { border:"1px solid #1f2a44", borderRadius:12, padding:16, background:"#0f172a" };
 const planBoxSecondary: React.CSSProperties = { border:"1px solid #2a1845", borderRadius:12, padding:16, background:"#1a1030" };
 const ul: React.CSSProperties = { margin:"10px 0 14px 18px" };
-const btnPrimary: React.CSSProperties = { display:"inline-block", padding:"10px 14px", borderRadius:10, border:"0", background:"#059669", color:"#fff", fontWeight:700, cursor:"pointer" };
+const btnPrimary: React.CSSProperties = { display:"inline-block", padding:"10px 14px", borderRadius:10, border:"0", background:"#059669", color:"#fff", fontWeight:700 };
 const btnSecondary: React.CSSProperties = { display:"inline-block", padding:"10px 14px", borderRadius:10, border:"0", background:"#a21caf", color:"#fff", fontWeight:700, textDecoration:"none" };
 const errBox: React.CSSProperties = { marginTop:16, padding:12, borderRadius:10, border:"1px solid #5a3535", background:"#331b1b" };
+const infoBox: React.CSSProperties = { marginBottom:12, padding:12, borderRadius:10, border:"1px solid #2a404f", background:"#0c1526" };
 const helpBox: React.CSSProperties = { marginTop:14, padding:10, borderRadius:10, border:"1px solid #244055", background:"#0c1526", fontSize:14 };
 const pre: React.CSSProperties = { whiteSpace: "pre-wrap", wordBreak: "break-word", background:"#0d1220", border:"1px solid #23304a", borderRadius:8, padding:10, fontSize:12 };
 const backLink: React.CSSProperties = { fontSize:14, color:"#93c5fd", textDecoration:"none", border:"1px solid #243044", padding:"6px 10px", borderRadius:8, background:"#0f172a" };
