@@ -1,134 +1,85 @@
 "use client";
-
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
-// Same safe default as login
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-backend.onrender.com";
 
+type U = {
+  id: number; email: string; is_admin: boolean; is_active: boolean;
+  is_paid: boolean; subscription_id?: string | null; plan_status?: string | null; created_at?: string | null;
+};
+
 export default function AdminUsers() {
-  const router = useRouter();
-  const [data, setData] = useState<any>(null);
+  const [items, setItems] = useState<U[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [me, setMe] = useState<{ email: string; is_admin: boolean } | null>(null);
-  const [debug, setDebug] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
   function getToken(): string | null {
     try {
       const m = document.cookie.match(/(?:^|;\s*)token=([^;]+)/);
       return m ? decodeURIComponent(m[1]) : localStorage.getItem("token");
-    } catch {
-      return null;
-    }
-  }
-  function clearToken() {
-    document.cookie = "token=; Max-Age=0; Path=/";
-    localStorage.removeItem("token");
+    } catch { return null; }
   }
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) { router.replace("/login"); return; }
-
     (async () => {
-      setErr(null);
-      setDebug({ API_BASE });
+      setErr(null); setLoading(true);
       try {
-        const meRes = await fetch(`${API_BASE}/api/profile`, {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
-        const meTxt = await meRes.text();
-        let meJson: any = {};
-        try { meJson = meTxt ? JSON.parse(meTxt) : {}; } catch {}
-        if (!meRes.ok) {
-          setDebug((d: any) => ({ ...d, profile: { status: `${meRes.status} ${meRes.statusText}`, body: meTxt }}));
-          throw new Error(meJson?.detail || `Profile ${meRes.status}`);
-        }
-        setMe({ email: meJson.email, is_admin: !!meJson.is_admin });
-        if (!meJson.is_admin) throw new Error("Admins only");
-
+        const token = getToken();
+        if (!token) { window.location.href="/login"; return; }
         const r = await fetch(`${API_BASE}/api/admin/users`, {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         });
-        const rTxt = await r.text();
-        let j: any = {};
-        try { j = rTxt ? JSON.parse(rTxt) : {}; } catch {}
-        setDebug((d: any) => ({ ...d, users: { status: `${r.status} ${r.statusText}`, body: rTxt }}));
+        const j = await r.json().catch(()=>({}));
         if (!r.ok) throw new Error(j?.detail || `HTTP ${r.status}`);
-
-        setData(j);
-      } catch (e: any) {
-        setErr(String(e.message || e));
-      }
+        setItems(j.items || []);
+      } catch(e:any) {
+        setErr(String(e.message||e));
+      } finally { setLoading(false); }
     })();
-  }, [router]);
-
-  function logout() {
-    clearToken();
-    router.replace("/login");
-  }
+  }, []);
 
   return (
-    <main style={{ padding: 24, fontFamily: "system-ui", color: "#e5e7eb", background: "#0b0f1a", minHeight: "100vh" }}>
-      <h1 style={{ fontSize: 22, margin: "0 0 10px" }}>Admin · Users</h1>
-
-      <div style={{ opacity: .85, marginBottom: 8 }}>
-        <div><b>API_BASE:</b> {API_BASE}</div>
-        <div><b>Logged in as:</b> {me?.email || "—"}</div>
-        <div><b>Admin:</b> {me?.is_admin ? "yes" : "no"}</div>
-      </div>
-
-      {err ? <div style={errBox}>{err}</div> : null}
-
-      {debug ? (
-        <details style={{ margin: "10px 0" }}>
-          <summary>Debug</summary>
-          <pre style={pre}>{JSON.stringify(debug, null, 2)}</pre>
-        </details>
-      ) : null}
-
-      {!data ? <div>Loading…</div> : (
-        <>
-          <div style={{ opacity: .8, marginBottom: 8 }}>Total: {data.count}</div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", minWidth: 720 }}>
-              <thead>
-                <tr>
-                  {["Email", "Name", "Organisation", "Admin", "Paid", "Created"].map(h => (
-                    <th key={h} style={th}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.users.map((u: any) => (
-                  <tr key={u.email}>
-                    <td style={td}>{u.email}</td>
-                    <td style={td}>{u.name || "-"}</td>
-                    <td style={td}>{u.organisation || u.company || "-"}</td>
-                    <td style={td}>{u.is_admin ? "yes" : "no"}</td>
-                    <td style={td}>{u.is_paid ? "yes" : "no"}</td>
-                    <td style={td}>{u.created_at || "-"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-
-      <div style={{ marginTop: 12 }}>
-        <button onClick={logout} style={btn}>Log out</button>
+    <main style={{minHeight:"100vh",background:"#0b0f1a",color:"#e5e7eb",padding:24}}>
+      <h1>Admin — Users</h1>
+      {err && <div style={{margin:"10px 0", padding:10, border:"1px solid #5a3535", background:"#331b1b"}}>{err}</div>}
+      <div style={{overflow:"auto", border:"1px solid #243044", borderRadius:10}}>
+        <table style={{width:"100%", borderCollapse:"collapse"}}>
+          <thead>
+            <tr style={{background:"#0e1320"}}>
+              <th style={th}>Email</th>
+              <th style={th}>Paid</th>
+              <th style={th}>Plan status</th>
+              <th style={th}>Subscription ID</th>
+              <th style={th}>Admin</th>
+              <th style={th}>Active</th>
+              <th style={th}>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td style={td} colSpan={7}>Loading…</td></tr>
+            ) : items.length === 0 ? (
+              <tr><td style={td} colSpan={7}>No users found</td></tr>
+            ) : items.map(u => (
+              <tr key={u.id} style={{borderTop:"1px solid #243044"}}>
+                <td style={td}>{u.email}</td>
+                <td style={td}>{u.is_paid ? "yes" : "no"}</td>
+                <td style={td}>{u.plan_status || "—"}</td>
+                <td style={{...td, fontFamily:"monospace"}}>{u.subscription_id || "—"}</td>
+                <td style={td}>{u.is_admin ? "yes" : "no"}</td>
+                <td style={td}>{u.is_active ? "yes" : "no"}</td>
+                <td style={td}>{u.created_at ? new Date(u.created_at).toLocaleString() : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </main>
   );
 }
 
-const th: React.CSSProperties = { textAlign: "left", padding: "8px 10px", borderBottom: "1px solid #243044", background: "#0f172a" };
-const td: React.CSSProperties = { padding: "8px 10px", borderBottom: "1px solid #1f2a44" };
-const errBox: React.CSSProperties = { margin: "8px 0", padding: "8px 10px", borderRadius: 8, background: "#3a1f1f", border: "1px solid #5a3535", color: "#fecaca", fontSize: 13 };
-const btn: React.CSSProperties = { padding: "8px 12px", borderRadius: 8, border: "1px solid #2b3650", background: "#0f172a", color: "#93c5fd", cursor: "pointer" };
-const pre: React.CSSProperties = { whiteSpace: "pre-wrap", wordBreak: "break-word", background: "#0d1220", border: "1px solid #23304a", borderRadius: 8, padding: 10, fontSize: 12 };
+const th: React.CSSProperties = { textAlign:"left", padding:"10px 12px", fontWeight:700, fontSize:13, borderBottom:"1px solid #243044" };
+const td: React.CSSProperties = { padding:"10px 12px", fontSize:13 };
