@@ -8,12 +8,28 @@ const API_BASE =
 
 type Me = { email: string; is_paid?: boolean; subscription_id?: string | null };
 
+const REASON_OPTIONS = [
+  { value: "price", label: "Price too high" },
+  { value: "value", label: "Didn’t see enough value" },
+  { value: "missing_feature", label: "Missing a key feature" },
+  { value: "bugs", label: "Bugs / reliability issues" },
+  { value: "support", label: "Support / onboarding" },
+  { value: "switching", label: "Switching to another tool" },
+  { value: "temporary", label: "Temporary need only" },
+  { value: "other", label: "Other" },
+];
+
 export default function PaymentsPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [cfg, setCfg] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+
+  // cancel modal state
+  const [showCancel, setShowCancel] = useState(false);
+  const [reasonCategory, setReasonCategory] = useState("price");
+  const [reasonDetail, setReasonDetail] = useState("");
 
   function getToken(): string | null {
     try {
@@ -57,18 +73,25 @@ export default function PaymentsPage() {
     finally { setBusy(false); }
   }
 
-  async function cancelSubscription() {
-    if (!window.confirm("Cancel subscription now? This is effective immediately and Pro access stops right away.")) return;
+  async function confirmCancel() {
     const t = getToken(); if (!t) { window.location.href="/login"; return; }
     setErr(null); setMsg(null); setBusy(true);
     try {
       const r = await fetch(`${API_BASE}/api/payments/cancel`, {
-        method: "POST", headers: { Authorization: `Bearer ${t}` },
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${t}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          reason_category: reasonCategory,
+          reason_detail: reasonDetail,
+        }),
       });
       const j = await r.json().catch(()=>({}));
       if (!r.ok) throw new Error(j?.detail || `HTTP ${r.status}`);
       setMsg("Subscription cancelled immediately. You’ve been moved to the Free tier.");
-      // Optional: soft-refresh profile
+      setShowCancel(false);
       setMe(m => m ? {...m, is_paid:false} : m);
     } catch(e:any) { setErr(String(e.message||e)); }
     finally { setBusy(false); }
@@ -105,8 +128,8 @@ export default function PaymentsPage() {
                 {busy ? "Starting…" : "Start subscription"}
               </button>
             ) : me?.subscription_id ? (
-              <button onClick={cancelSubscription} disabled={busy} style={{...btnSecondary, background:"#ef4444"}}>
-                {busy ? "Cancelling…" : "Cancel subscription (effective immediately)"}
+              <button onClick={() => setShowCancel(true)} disabled={busy} style={{...btnSecondary, background:"#ef4444"}}>
+                Cancel subscription (effective immediately)
               </button>
             ) : (
               <div style={{opacity:.8}}>Already on Pro.</div>
@@ -135,6 +158,37 @@ export default function PaymentsPage() {
 
         <div style={helpBox}>Payment issues? <Link href="/contact">Need support</Link></div>
       </div>
+
+      {/* Cancel modal */}
+      {showCancel && (
+        <div style={modalBackdrop} role="dialog" aria-modal="true" aria-label="Cancel subscription dialog">
+          <div style={modalCard}>
+            <h3 style={{marginTop:0}}>Cancel subscription</h3>
+            <p style={{opacity:.85, marginTop:4}}>This will take effect <b>immediately</b>. Help us improve—what’s the main reason?</p>
+
+            <label style={{display:"grid", gap:6, marginTop:10}}>
+              <span>Reason</span>
+              <select value={reasonCategory} onChange={e=>setReasonCategory(e.target.value)}
+                      style={inputStyle}>
+                {REASON_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </label>
+
+            <label style={{display:"grid", gap:6, marginTop:10}}>
+              <span>Anything specific we can fix? <i>(optional)</i></span>
+              <textarea value={reasonDetail} onChange={e=>setReasonDetail(e.target.value)} rows={4}
+                        style={{...inputStyle, resize:"vertical"}} placeholder="Tell us more…" />
+            </label>
+
+            <div style={{display:"flex", gap:8, marginTop:14}}>
+              <button onClick={confirmCancel} disabled={busy} style={{...btnPrimary, background:"#ef4444"}}>
+                {busy ? "Cancelling…" : "Cancel now"}
+              </button>
+              <button onClick={()=>setShowCancel(false)} style={{...btnSecondary, background:"#374151"}}>Keep Pro</button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -146,10 +200,13 @@ const planBox: React.CSSProperties = { border:"1px solid #1f2a44", borderRadius:
 const planBoxSecondary: React.CSSProperties = { border:"1px solid #2a1845", borderRadius:12, padding:16, background:"#1a1030" };
 const ul: React.CSSProperties = { margin:"10px 0 14px 18px" };
 const btnPrimary: React.CSSProperties = { display:"inline-block", padding:"10px 14px", borderRadius:10, border:"0", background:"#059669", color:"#fff", fontWeight:700 };
-const btnSecondary: React.CSSProperties = { display:"inline-block", padding:"10px 14px", borderRadius:10, border:"0", color:"#fff", fontWeight:700, textDecoration:"none" };
+const btnSecondary: React.CSSProperties = { display:"inline-block", padding:"10px 14px", border:"0", color:"#fff", fontWeight:700, textDecoration:"none" };
 const backLink: React.CSSProperties = { fontSize:14, color:"#93c5fd", textDecoration:"none", border:"1px solid #243044", padding:"6px 10px", borderRadius:8, background:"#0f172a" };
 const infoBox: React.CSSProperties = { margin:"8px 0 14px", padding:10, borderRadius:10, border:"1px solid #244055", background:"#0c1526" };
 const errBox: React.CSSProperties = { marginTop:16, padding:12, borderRadius:10, border:"1px solid #5a3535", background:"#331b1b" };
 const okBox: React.CSSProperties = { marginTop:12, padding:10, borderRadius:10, border:"1px solid #2b4f2a", background:"#163018" };
 const helpBox: React.CSSProperties = { marginTop:14, padding:10, borderRadius:10, border:"1px solid #244055", background:"#0c1526", fontSize:14 };
 const pre: React.CSSProperties = { whiteSpace:"pre-wrap", wordBreak:"break-word", background:"#0d1220", border:"1px solid #23304a", borderRadius:8, padding:10, fontSize:12 };
+const modalBackdrop: React.CSSProperties = { position:"fixed", inset:0, background:"rgba(0,0,0,.55)", display:"grid", placeItems:"center", padding:16 };
+const modalCard: React.CSSProperties = { width:"min(100%,560px)", background:"#0e1320", border:"1px solid #243044", borderRadius:12, padding:18 };
+const inputStyle: React.CSSProperties = { padding:"10px 12px", borderRadius:10, border:"1px solid #2b3650", background:"#0f172a", color:"#e5e7eb" };
