@@ -28,7 +28,6 @@ export default function PaymentsPage() {
       const t = getToken();
       if (!t) { window.location.href = "/login"; return; }
       try {
-        // Profile
         const pr = await fetch(`${API_BASE}/api/profile`, {
           headers: { Authorization: `Bearer ${t}` }, cache: "no-store",
         });
@@ -36,14 +35,11 @@ export default function PaymentsPage() {
         if (!pr.ok) throw new Error(pj?.detail || `Profile ${pr.status}`);
         setMe({ email: pj.email, is_paid: !!pj.is_paid, subscription_id: pj.subscription_id });
 
-        // Subscription config
         const cr = await fetch(`${API_BASE}/api/payments/subscription-config`, { cache: "no-store" });
         const cj = await cr.json().catch(()=>({}));
         if (!cr.ok) throw new Error(cj?.detail || `Config ${cr.status}`);
         setCfg(cj);
-      } catch(e:any) {
-        setErr(String(e.message||e));
-      }
+      } catch(e:any) { setErr(String(e.message||e)); }
     })();
   }, []);
 
@@ -56,13 +52,13 @@ export default function PaymentsPage() {
       });
       const j = await r.json().catch(()=>({}));
       if (!r.ok) throw new Error(j?.detail || `HTTP ${r.status}`);
-      setMsg("Subscription created. Complete mandate if prompted. Access will flip to Pro once activated.");
-    } catch(e:any) {
-      setErr(String(e.message||e));
-    } finally { setBusy(false); }
+      setMsg("Subscription created. If prompted, approve the mandate. Pro access switches on once activated.");
+    } catch(e:any) { setErr(String(e.message||e)); }
+    finally { setBusy(false); }
   }
 
   async function cancelSubscription() {
+    if (!window.confirm("Cancel subscription now? This is effective immediately and Pro access stops right away.")) return;
     const t = getToken(); if (!t) { window.location.href="/login"; return; }
     setErr(null); setMsg(null); setBusy(true);
     try {
@@ -71,10 +67,11 @@ export default function PaymentsPage() {
       });
       const j = await r.json().catch(()=>({}));
       if (!r.ok) throw new Error(j?.detail || `HTTP ${r.status}`);
-      setMsg("Subscription cancelled. If applicable, access continues until the end of the period.");
-    } catch(e:any) {
-      setErr(String(e.message||e));
-    } finally { setBusy(false); }
+      setMsg("Subscription cancelled immediately. You’ve been moved to the Free tier.");
+      // Optional: soft-refresh profile
+      setMe(m => m ? {...m, is_paid:false} : m);
+    } catch(e:any) { setErr(String(e.message||e)); }
+    finally { setBusy(false); }
   }
 
   const alreadyPro = !!me?.is_paid;
@@ -88,12 +85,11 @@ export default function PaymentsPage() {
         </div>
         <div style={{opacity:.75, marginBottom:12}}>Logged in as <b>{me?.email || "…"}</b></div>
 
-        {alreadyPro ? (
+        {alreadyPro && (
           <div style={infoBox}>
-            You’re already on <b>CAIO Pro</b>.
-            {me?.subscription_id ? " You have an active subscription." : " (manual upgrade)"}
+            You’re on <b>CAIO Pro</b>. Cancel anytime — <b>effective immediately</b>.
           </div>
-        ) : null}
+        )}
 
         <div style={grid}>
           <div style={planBox}>
@@ -110,7 +106,7 @@ export default function PaymentsPage() {
               </button>
             ) : me?.subscription_id ? (
               <button onClick={cancelSubscription} disabled={busy} style={{...btnSecondary, background:"#ef4444"}}>
-                {busy ? "Cancelling…" : "Cancel subscription"}
+                {busy ? "Cancelling…" : "Cancel subscription (effective immediately)"}
               </button>
             ) : (
               <div style={{opacity:.8}}>Already on Pro.</div>
@@ -118,7 +114,7 @@ export default function PaymentsPage() {
 
             {cfg ? (
               <div style={{opacity:.7, fontSize:12, marginTop:6}}>
-                {cfg.currency} {cfg.amount_major} / {cfg.interval}  · mode: {cfg.mode}
+                {cfg.currency} {cfg.amount_major} / {cfg.interval} · mode: {cfg.mode}
               </div>
             ) : null}
           </div>
@@ -137,7 +133,7 @@ export default function PaymentsPage() {
         {err ? <div style={errBox}><b>We hit a snag</b><pre style={pre}>{err}</pre></div> : null}
         {msg ? <div style={okBox}>{msg}</div> : null}
 
-        <div style={helpBox}>Having trouble with payments? <Link href="/contact">Need support</Link></div>
+        <div style={helpBox}>Payment issues? <Link href="/contact">Need support</Link></div>
       </div>
     </main>
   );
@@ -150,8 +146,9 @@ const planBox: React.CSSProperties = { border:"1px solid #1f2a44", borderRadius:
 const planBoxSecondary: React.CSSProperties = { border:"1px solid #2a1845", borderRadius:12, padding:16, background:"#1a1030" };
 const ul: React.CSSProperties = { margin:"10px 0 14px 18px" };
 const btnPrimary: React.CSSProperties = { display:"inline-block", padding:"10px 14px", borderRadius:10, border:"0", background:"#059669", color:"#fff", fontWeight:700 };
-const btnSecondary: React.CSSProperties = { display:"inline-block", padding:"10px 14px", borderRadius:10, border:"0", background:"#a21caf", color:"#fff", fontWeight:700, textDecoration:"none" };
+const btnSecondary: React.CSSProperties = { display:"inline-block", padding:"10px 14px", borderRadius:10, border:"0", color:"#fff", fontWeight:700, textDecoration:"none" };
 const backLink: React.CSSProperties = { fontSize:14, color:"#93c5fd", textDecoration:"none", border:"1px solid #243044", padding:"6px 10px", borderRadius:8, background:"#0f172a" };
+const infoBox: React.CSSProperties = { margin:"8px 0 14px", padding:10, borderRadius:10, border:"1px solid #244055", background:"#0c1526" };
 const errBox: React.CSSProperties = { marginTop:16, padding:12, borderRadius:10, border:"1px solid #5a3535", background:"#331b1b" };
 const okBox: React.CSSProperties = { marginTop:12, padding:10, borderRadius:10, border:"1px solid #2b4f2a", background:"#163018" };
 const helpBox: React.CSSProperties = { marginTop:14, padding:10, borderRadius:10, border:"1px solid #244055", background:"#0c1526", fontSize:14 };

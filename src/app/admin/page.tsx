@@ -5,6 +5,14 @@ const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-backend.onrender.com";
 
+type Metrics = {
+  active_total: number;
+  active_inr: number | null;
+  active_usd: number | null;
+  cancelled_7d: number;
+  mrr: Record<string, number>;
+};
+
 type U = {
   id: number; email: string; is_admin: boolean; is_active: boolean;
   is_paid: boolean; subscription_id?: string | null; plan_status?: string | null; created_at?: string | null;
@@ -12,6 +20,7 @@ type U = {
 
 export default function AdminUsers() {
   const [items, setItems] = useState<U[]>([]);
+  const [metrics, setMetrics] = useState<Metrics| null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -28,23 +37,39 @@ export default function AdminUsers() {
       try {
         const token = getToken();
         if (!token) { window.location.href="/login"; return; }
-        const r = await fetch(`${API_BASE}/api/admin/users`, {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
-        const j = await r.json().catch(()=>({}));
-        if (!r.ok) throw new Error(j?.detail || `HTTP ${r.status}`);
-        setItems(j.items || []);
-      } catch(e:any) {
-        setErr(String(e.message||e));
-      } finally { setLoading(false); }
+
+        const [ur, mr] = await Promise.all([
+          fetch(`${API_BASE}/api/admin/users`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" }),
+          fetch(`${API_BASE}/api/admin/metrics`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" }),
+        ]);
+
+        const uj = await ur.json().catch(()=>({}));
+        const mj = await mr.json().catch(()=>({}));
+
+        if (!ur.ok) throw new Error(uj?.detail || `Users HTTP ${ur.status}`);
+        if (!mr.ok) throw new Error(mj?.detail || `Metrics HTTP ${mr.status}`);
+
+        setItems(uj.items || []);
+        setMetrics(mj);
+      } catch(e:any) { setErr(String(e.message||e)); }
+      finally { setLoading(false); }
     })();
   }, []);
 
   return (
     <main style={{minHeight:"100vh",background:"#0b0f1a",color:"#e5e7eb",padding:24}}>
       <h1>Admin — Users</h1>
+
+      {metrics && (
+        <div style={{display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:12, margin:"10px 0 16px"}}>
+          <Tile title="Active Pro" value={metrics.active_total.toString()} />
+          <Tile title="MRR" value={Object.entries(metrics.mrr).map(([k,v]) => `${k} ${v}`).join("  ·  ")} />
+          <Tile title="Cancels (7d)" value={metrics.cancelled_7d.toString()} />
+        </div>
+      )}
+
       {err && <div style={{margin:"10px 0", padding:10, border:"1px solid #5a3535", background:"#331b1b"}}>{err}</div>}
+
       <div style={{overflow:"auto", border:"1px solid #243044", borderRadius:10}}>
         <table style={{width:"100%", borderCollapse:"collapse"}}>
           <thead>
@@ -78,6 +103,15 @@ export default function AdminUsers() {
         </table>
       </div>
     </main>
+  );
+}
+
+function Tile({title, value}:{title:string; value:string}) {
+  return (
+    <div style={{border:"1px solid #243044", background:"#0e1320", borderRadius:10, padding:12}}>
+      <div style={{opacity:.7, fontSize:12}}>{title}</div>
+      <div style={{fontSize:22, fontWeight:800, marginTop:4}}>{value}</div>
+    </div>
   );
 }
 
