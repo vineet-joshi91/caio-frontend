@@ -51,24 +51,23 @@ type BrainParse = {
   recommendations?: string;
 };
 
+/** Full-mode parser: split on ### {UPPERCASE} headers like ### CFO */
 function parseBrains(md: string): BrainParse[] {
   const sections = md
     .split(/\n(?=###\s+[A-Z]{2,}.*$)/gm)
     .map(s => s.trim())
     .filter(Boolean);
 
-  if (sections.length === 0) return [{ name: "Analysis", insights: md }];
+  if (sections.length === 0) return [];
 
   return sections.map((sec, i) => {
     const headerMatch = sec.match(/^###\s+(.+)$/m);
     const name = (headerMatch ? headerMatch[1] : `Section ${i + 1}`).trim();
     const body = sec.replace(/^###\s+.+?\n/, "").trim();
-
     const getBlock = (label: string) => {
       const m = body.match(new RegExp(`###\\s*${label}\\s*([\\s\\S]*?)(?=###\\s*\\w+|$)`, "i"));
       return m ? m[1].trim() : undefined;
     };
-
     return {
       name,
       insights: getBlock("Insights"),
@@ -77,135 +76,97 @@ function parseBrains(md: string): BrainParse[] {
   });
 }
 
-/** Extract multi-line list items and ignore any preamble before the first marker. */
+/** Extract list items from any numbered/ul-style block */
 function extractListItems(text: string): string[] {
   if (!text) return [];
   const cleaned = text.replace(/^[\s\S]*?(?=^\s*(?:\d+[.)]|[-*•])\s)/m, "");
   const parts = cleaned.split(/\n(?=\s*(?:\d+[.)]|[-*•])\s)/g);
-  return parts
-    .map(p => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim())
-    .filter(Boolean);
+  return parts.map(p => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim()).filter(Boolean);
 }
 
-/** Ensure exactly 3 recs; if fewer, pad with non-duplicated content from insights/text. */
-function ensureTop3(items: string[], auxText: string): string[] {
-  const out = items.slice(0, 3);
-  if (out.length >= 3) return out;
-
-  const seen = new Set(out.map(x => x.toLowerCase()));
-  const addIfNew = (s: string) => {
-    const k = s.toLowerCase();
-    if (!seen.has(k) && s.trim()) { out.push(s.trim()); seen.add(k); }
-  };
-
-  // Try more list-style content
-  for (const c of extractListItems(auxText)) {
-    addIfNew(c); if (out.length === 3) return out;
-  }
-
-  // Fallback: split into sentences; use sufficiently informative ones
-  const sentences = auxText
-    .replace(/[\n\r]+/g, " ")
-    .split(/(?<=[.!?])\s+(?=[A-Z(])/)
-    .filter(s => s.length > 30);
-  for (const s of sentences) { addIfNew(s); if (out.length === 3) break; }
-
-  while (out.length < 3) out.push("Add a targeted action based on data gaps.");
-  return out;
+/** Split into sentences and keep meaningful ones */
+function sentences(text: string): string[] {
+  const clean = text
+    .replace(/^#+\s.*$/gm, " ")
+    .replace(/\n+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return clean.split(/(?<=[.!?])\s+(?=[A-Z(])/).filter(s => s.length > 40);
 }
 
-/** Top-N insights ranked by frequency across brains, then by richness. */
-function topInsights(blocks: string[], N = 5): string[] {
-  const all: string[] = [];
-  blocks.forEach(b => extractListItems(b).forEach(x => all.push(x)));
-
-  const counts = new Map<string, { c: number; text: string }>();
-  for (const it of all) {
-    const key = it.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    counts.set(key, { c: (counts.get(key)?.c ?? 0) + 1, text: it });
-  }
-
-  const ranked = [...counts.values()]
-    .sort((a, b) => (b.c - a.c) || (b.text.length - a.text.length))
-    .map(x => x.text);
-
-  if (ranked.length >= N) return ranked.slice(0, N);
-
-  const unique: string[] = [];
-  const seen = new Set(ranked.map(t => t.toLowerCase()));
-  for (const b of blocks) {
-    for (const it of extractListItems(b)) {
-      const k = it.toLowerCase();
-      if (!seen.has(k)) { unique.push(it); seen.add(k); }
-      if (ranked.length + unique.length >= N) break;
-    }
-    if (ranked.length + unique.length >= N) break;
-  }
-  return ranked.concat(unique).slice(0, N);
+/** Grab block(s) following a specific heading anywhere, e.g. "Insights" or "Recommendations" */
+function extractHeadingBlock(md: string, label: string): string {
+  const re = new RegExp(`###\\s*${label}\\s*([\\s\\S]*?)(?=\\n###\\s*\\w+|$)`, "ig");
+  let out = "";
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(md))) out += (out ? "\n\n" : "") + (m[1] || "");
+  return out.trim();
 }
 
-/** Lightly vary repeated bold headlines so different brains don't read identical. */
-function varyHeadline(text: string, brain: string, idx: number): string {
-  // matches **Title**: rest
-  const m = text.match(/^\s*\*\*(.+?)\*\*(\s*:\s*)?(.*)$/);
-  if (!m) return text; // nothing to vary
-  const title = m[1].trim();
-  const after = m[3] || "";
-
-  const verbs = [
-    ["Reallocate", "Rebalance", "Reprioritize", "Shift"],
-    ["Optimize", "Improve", "Refine", "Tune"],
-    ["Develop", "Create", "Establish", "Build"],
-    ["Implement", "Adopt", "Deploy", "Roll out"],
-    ["Enhance", "Boost", "Strengthen", "Elevate"],
-    ["Diversify", "Expand", "Broaden", "De-risk"],
-    ["Prioritize", "Focus on", "Emphasize", "Champion"],
-  ];
-
-  const pick = (arr: string[]) => {
-    const h = (brain.length + idx * 7 + title.length) % arr.length;
-    return arr[h];
-  };
-
-  const tParts = title.split(/\s+/);
-  const first = tParts[0];
-  let replaced = title;
-
-  for (const group of verbs) {
-    if (group.some(v => v.toLowerCase() === first.toLowerCase())) {
-      replaced = [pick(group), ...tParts.slice(1)].join(" ");
-      break;
-    }
-  }
-
-  // Add a subtle persona-flavor if still identical
-  if (replaced === title) {
-    const flavor: Record<string, string[]> = {
-      CFO: ["Financial move:", "Spend strategy:", "Margin play:"],
-      COO: ["Ops action:", "Process change:", "Efficiency step:"],
-      CHRO: ["People action:", "Talent move:", "Culture step:"],
-      CMO: ["Growth play:", "Campaign focus:", "Demand lever:"],
-      CPO: ["Product bet:", "Roadmap move:", "Experience tweak:"],
-    };
-    const tag = (flavor[brain] || ["Action:"])[(brain.length + idx) % (flavor[brain]?.length || 1)];
-    replaced = `${tag} ${title}`;
-  }
-
-  return `**${replaced}**: ${after}`.trim();
+/** Text before the first Recommendations heading (fallback material for insights) */
+function textBeforeRecommendations(md: string): string {
+  const idx = md.search(/###\s*Recommendations/i);
+  return idx >= 0 ? md.slice(0, idx) : md;
 }
 
-/* Inline Markdown component so list items render **bold** etc. without extra <p> */
+/** Inline MD so **bold** etc. work inside list items */
 function InlineMD({ text }: { text: string }) {
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        p: ({node, ...props}) => <span {...props} />,
-      }}
-    >
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ p: (props) => <span {...props} /> }}>
       {text}
     </ReactMarkdown>
   );
+}
+
+/** Trim second demo bullet nicely and append teaser */
+function truncateForDemo(text: string, maxChars = 120, teaser = " _…Upgrade to see the full item._") {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (clean.length <= maxChars) return clean + teaser;
+  const clipped = clean.slice(0, maxChars).replace(/[\s,.-]+[^,.\s-]*$/, "");
+  return clipped + teaser;
+}
+
+/** Fallback single action from insights if model gave no recs */
+function deriveOneActionFromInsights(insights?: string): string | null {
+  const first = extractListItems(insights || "")[0] || sentences(insights || "")[0];
+  if (!first) return null;
+  if (/^\s*\*\*.+?\*\*\s*:/.test(first)) return first;
+  return `**Priority Action**: ${first}`;
+}
+
+/** Detects obvious demo placeholder text coming from backend */
+function looksLikeDemo(text: string) {
+  return /demo preview|upgrade to pro|brains used/i.test(text || "");
+}
+
+/** Synthesizes one realistic insight & CFO/CHRO recommendations from the brief/file name */
+function synthesizeFromContext(seedText: string, fileName?: string) {
+  const src = `${seedText || ""} ${fileName || ""}`.toLowerCase();
+
+  const hasRevenue = /(revenue|forecast|projection|budget|p&l|profit|invoice|cash\s?flow|collections|ds[o0])/i.test(src);
+  const hasHiring  = /(hiring|recruit|offer|headcount|attrition|engagement|talent|people)/i.test(src);
+  const hasOps     = /(ops|operations|sla|throughput|backlog|process|capacity)/i.test(src);
+
+  const insight =
+    hasRevenue
+      ? "**Liquidity exposure from slow collections**: the document context suggests revenue planning and payment timing; extend your cash planning by monitoring DSO and top-account ageing to avoid month-end crunches."
+      : hasHiring
+      ? "**Talent stability risk**: the context points to headcount changes; track acceptance rates and exit drivers by function to prevent productivity loss."
+      : hasOps
+      ? "**Throughput constraint**: there are signals of process load; identify the longest queue (bottleneck) and rebalance work-in-progress limits."
+      : "**Execution risk**: the document hints at important changes; align owners, timelines, and a single KPI per workstream to prevent slippage.";
+
+  const cfo =
+    hasRevenue
+      ? "**Shorten DSO by 3–5 days**: add early-payment discounts (1/10 net 30) for top 20 AR accounts, automate reminders at +3/+7/+14, and reconcile unapplied cash weekly to lift cash conversion."
+      : "**Tighten spend governance**: enforce PO-before-invoice for vendors, and roll a weekly cash bridge (opening → ops → financing) to forecast runway with ±5% error.";
+
+  const chro =
+    hasHiring
+      ? "**Stabilize offers & ramp**: set a 48-hour SLA for feedback, publish compensation bands in JD, and run ‘why-we-win/lose’ on offers to lift acceptance by 10–15%."
+      : "**Lower regrettable attrition**: run quarterly stay-interviews for top 10% performers, add manager 1:1 scorecards, and flag teams with >2 back-to-back low eNPS for intervention.";
+
+  return { insight, cfo, chro };
 }
 
 /* ---------------- Page ---------------- */
@@ -415,11 +376,9 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
         <button onClick={run} disabled={busy} className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-60 shadow">
           {busy ? "Analyzing…" : "Analyze"}
         </button>
-        {!isPaid && (
-          <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
-            Need full features? Upgrade
-          </Link>
-        )}
+        <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
+          {isPaid ? "Manage plan" : "Need full features? Upgrade"}
+        </Link>
       </div>
 
       {/* errors */}
@@ -438,6 +397,8 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
               <h3 className="font-semibold">{result.title || "Analysis Unavailable"}</h3>
               <p className="text-sm mt-1">{result.message}</p>
             </div>
+          ) : result.status === "demo" ? (
+            <GroupedReport title={result.title || "Demo Mode"} md={result.summary || ""} demo seedText={text} fileName={file?.name} />
           ) : (
             <GroupedReport title={result.title || "Analysis Result"} md={result.summary || ""} />
           )}
@@ -447,23 +408,139 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
   );
 }
 
-/* ---------------- Grouped report (Top 5 Insights + per-CXO exactly 3 varied recs) ---------------- */
+/* ---------------- Grouped report ---------------- */
 
-function GroupedReport({ title, md }: { title: string; md: string }) {
+function GroupedReport({
+  title,
+  md,
+  demo = false,
+  seedText = "",
+  fileName,
+}: {
+  title: string;
+  md: string;
+  demo?: boolean;
+  seedText?: string;
+  fileName?: string;
+}) {
   const normalized = normalizeAnalysis(md);
-  const brains = parseBrains(normalized);
 
-  const collectiveTop5 = topInsights(brains.map(b => b.insights || ""), 5);
+  // ---------- DEMO MODE (CFO + CHRO; real content + teaser seconds) ----------
+  if (demo) {
+    // If the backend demo string is unhelpful, synthesize one meaningful item from context
+    const ctx = synthesizeFromContext(seedText, fileName);
+
+    // Try to extract real insights; if they look like demo placeholders, use synthesized
+    const insightsBlock = extractHeadingBlock(normalized, "Insights");
+    let insights = extractListItems(insightsBlock);
+    if (insights.length === 0) {
+      const preRec = textBeforeRecommendations(normalized);
+      insights = extractListItems(preRec);
+    }
+    if (insights.length === 0) insights = sentences(textBeforeRecommendations(normalized));
+
+    const i1 = (!looksLikeDemo(insights[0] || "") && insights[0]) || ctx.insight;
+    const i2raw = (!looksLikeDemo(insights[1] || "") && (insights[1] || insights[0])) || ctx.insight;
+    const i2 = truncateForDemo(i2raw);
+
+    // Recommendations extraction
+    const recBlock = extractHeadingBlock(normalized, "Recommendations");
+    let recs = extractListItems(recBlock);
+
+    const previewRoles = ["CFO", "CHRO"];
+    const roleRecs: Record<string, { r1: string; r2: string }> = {};
+
+    // CFO first bullet: prefer real, else synthesized CFO
+    const cfo1 = (!looksLikeDemo(recs[0] || "") && recs[0]) || ctx.cfo || deriveOneActionFromInsights(i1) || "**Priority Action**: Address the most material item from insights.";
+    const chro1 = (!looksLikeDemo(recs[1] || "") && recs[1]) || ctx.chro || "Implement targeted people actions derived from insights.";
+
+    roleRecs["CFO"] = { r1: cfo1, r2: truncateForDemo(recs[2] || recs[0] || ctx.cfo) };
+    roleRecs["CHRO"] = { r1: chro1, r2: truncateForDemo(recs[3] || recs[1] || ctx.chro) };
+
+    const locked = ["COO", "CMO", "CPO"];
+
+    return (
+      <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
+        <h3 className="font-semibold">Demo Mode · CFO, CHRO</h3>
+
+        <details open className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+          <summary className="cursor-pointer text-lg font-medium select-none">Collective Insights (preview)</summary>
+          <ol className="mt-3 list-decimal pl-6 space-y-1">
+            <li className="leading-7"><InlineMD text={i1} /></li>
+            <li className="leading-7"><InlineMD text={i2} /></li>
+          </ol>
+        </details>
+
+        <h4 className="text-base font-semibold opacity-90">Recommendations (preview)</h4>
+
+        {previewRoles.map((role) => (
+          <details key={role} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <summary className="cursor-pointer text-lg font-medium select-none">{role}</summary>
+            <ol className="mt-3 list-decimal pl-6 space-y-1">
+              <li className="leading-7"><InlineMD text={roleRecs[role].r1} /></li>
+              <li className="leading-7"><InlineMD text={roleRecs[role].r2} /></li>
+            </ol>
+          </details>
+        ))}
+
+        <div className="grid gap-3 mt-2">
+          {locked.map((name) => (
+            <div key={name} className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 opacity-75">
+              <div className="flex items-center justify-between">
+                <span className="text-lg font-medium">{name}</span>
+                <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
+                  Upgrade to get full access
+                </Link>
+              </div>
+              <p className="mt-2 text-sm opacity-80">
+                Unlock full insights and all 3 recommendations for {name}.
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ---------- FULL (PRO) MODE ----------
+  const brains = parseBrains(normalized);
+  const collective = (() => {
+    const blocks = brains.map(b => b.insights || "");
+    const all: string[] = [];
+    blocks.forEach(b => extractListItems(b).forEach(x => all.push(x)));
+    const counts = new Map<string, { c: number; text: string }>();
+    for (const it of all) {
+      const key = it.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      counts.set(key, { c: (counts.get(key)?.c ?? 0) + 1, text: it });
+    }
+    const ranked = [...counts.values()]
+      .sort((a, b) => (b.c - a.c) || (b.text.length - a.text.length))
+      .map(x => x.text);
+
+    if (ranked.length >= 5) return ranked.slice(0, 5);
+
+    const unique: string[] = [];
+    const seen = new Set(ranked.map(t => t.toLowerCase()));
+    for (const b of blocks) {
+      for (const it of extractListItems(b)) {
+        const k = it.toLowerCase();
+        if (!seen.has(k)) { unique.push(it); seen.add(k); }
+        if (ranked.length + unique.length >= 5) break;
+      }
+      if (ranked.length + unique.length >= 5) break;
+    }
+    return ranked.concat(unique).slice(0, 5);
+  })();
 
   return (
     <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
       <h3 className="font-semibold">{title}</h3>
 
-      {collectiveTop5.length > 0 && (
+      {collective.length > 0 && (
         <details open className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
           <summary className="cursor-pointer text-lg font-medium select-none">Collective Insights (Top 5)</summary>
           <ol className="mt-3 list-decimal pl-6 space-y-1">
-            {collectiveTop5.map((it, i) => (
+            {collective.map((it, i) => (
               <li key={i} className="leading-7"><InlineMD text={it} /></li>
             ))}
           </ol>
@@ -472,12 +549,8 @@ function GroupedReport({ title, md }: { title: string; md: string }) {
 
       <div className="space-y-3">
         <h4 className="text-base font-semibold opacity-90">Recommendations</h4>
-
         {brains.map((b, i) => {
-          const base = extractListItems(b.recommendations || "");
-          const top3 = ensureTop3(base, (b.insights || "") + "\n\n" + (b.recommendations || ""))
-            .map((it, j) => varyHeadline(it, b.name, j));
-
+          const top3 = extractListItems(b.recommendations || "").slice(0, 3);
           return (
             <details key={i} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
               <summary className="cursor-pointer text-lg font-medium select-none">{b.name}</summary>
