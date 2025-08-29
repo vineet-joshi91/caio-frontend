@@ -1,8 +1,12 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
+/* ---------- Theme (v4) ---------- */
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --font-geist-sans: Arial, Helvetica, sans-serif;
+  --font-geist-mono: "Courier New", monospace;
 }
 
 @theme inline {
@@ -22,5 +26,18 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans);
 }
+
+/* ---------- Prose polish ---------- */
+.prose :where(code):not(:where([class~="not-prose"] *)) {
+  background: rgba(255,255,255,0.06);
+  padding: .15rem .35rem;
+  border-radius: .35rem;
+}
+.prose pre { background: rgba(255,255,255,0.06); }
+
+/* ---------- Comfy scrollbars ---------- */
+* { scrollbar-width: thin; scrollbar-color: #6b7280 transparent; }
+*::-webkit-scrollbar { height: 8px; width: 8px; }
+*::-webkit-scrollbar-thumb { background: #6b7280; border-radius: 8px; }
