@@ -23,24 +23,22 @@ declare global {
   }
 }
 
-/** Read token from cookie or localStorage, supporting BOTH access_token and token */
+/** Read token from cookie or localStorage; support BOTH access_token and token */
 function getToken(): string | null {
   try {
-    // cookies
     const cookie = document.cookie || "";
-    const rx = (name: string) =>
+    const pick = (name: string) =>
       cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`))?.[1];
 
-    const cookieAccess = rx("access_token");
-    const cookieToken = rx("token");
-    if (cookieAccess) return decodeURIComponent(cookieAccess);
-    if (cookieToken) return decodeURIComponent(cookieToken);
+    const c1 = pick("access_token");
+    const c2 = pick("token");
+    if (c1) return decodeURIComponent(c1);
+    if (c2) return decodeURIComponent(c2);
 
-    // localStorage
-    const lsAccess = localStorage.getItem("access_token");
-    const lsToken = localStorage.getItem("token");
-    if (lsAccess) return lsAccess;
-    if (lsToken) return lsToken;
+    const l1 = localStorage.getItem("access_token");
+    const l2 = localStorage.getItem("token");
+    if (l1) return l1;
+    if (l2) return l2;
 
     return null;
   } catch {
@@ -72,12 +70,11 @@ export default function PaymentsPage() {
       setErr(null);
       const t = getToken();
       if (!t) {
-        setErr(
-          "Missing auth token. Please log in again (we look for access_token or token in cookies/localStorage)."
-        );
+        setErr("Missing auth token. Please log in again.");
         return;
       }
       try {
+        // Profile
         const pr = await fetch(`${API_BASE}/api/profile`, {
           headers: { Authorization: `Bearer ${t}` },
           cache: "no-store",
@@ -86,6 +83,7 @@ export default function PaymentsPage() {
         if (!pr.ok) throw new Error(pj?.detail || `Profile ${pr.status}`);
         setMe({ email: pj.email, is_paid: !!pj.is_paid });
 
+        // Subscription config
         const cr = await fetch(`${API_BASE}/api/payments/subscription-config`, {
           cache: "no-store",
         });
@@ -93,7 +91,7 @@ export default function PaymentsPage() {
         if (!cr.ok) throw new Error(cj?.detail || `Config ${cr.status}`);
         setCfg(cj as Cfg);
       } catch (e: any) {
-        setErr(String(e.message || e));
+        setErr(String(e?.message || e));
       }
     })();
   }, []);
@@ -101,45 +99,38 @@ export default function PaymentsPage() {
   async function startSubscription() {
     console.log("[payments] startSubscription clicked");
     const t = getToken();
-    if (!t) {
-      setErr(
-        "No token found (access_token/token). Please log in again and retry."
-      );
-      return;
-    }
-    if (!cfg) {
-      setErr("Payment config not loaded yet. Try again in a moment.");
-      return;
-    }
+    if (!t) { setErr("No token found. Please log in again."); return; }
+    if (!cfg) { setErr("Payment config not loaded yet. Try again."); return; }
 
-    setBusy(true);
-    setErr(null);
-    setMsg(null);
+    setBusy(true); setErr(null); setMsg(null);
 
     try {
-      // 1) Create subscription on backend
-      const r = await fetch(`${API_BASE}/api/payments/subscribe`, {
+      // 1) Create subscription on backend (POST → fallback to GET on 405)
+      let res = await fetch(`${API_BASE}/api/payments/subscribe`, {
         method: "POST",
         headers: { Authorization: `Bearer ${t}` },
       });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.detail || `HTTP ${r.status}`);
+
+      if (res.status === 405) {
+        console.log("[payments] POST /subscribe returned 405 — retrying GET");
+        res = await fetch(`${API_BASE}/api/payments/subscribe`, {
+          headers: { Authorization: `Bearer ${t}` },
+        });
+      }
+
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.detail || `Subscribe ${res.status}`);
+
       const { subscription_id, key_id } = j as {
         subscription_id: string;
         key_id: string;
       };
 
-      try {
-        localStorage.setItem("rzp_sub_id", subscription_id);
-      } catch {}
+      try { localStorage.setItem("rzp_sub_id", subscription_id); } catch {}
 
-      // 2) Load SDK and open checkout
+      // 2) Load SDK + open checkout
       await loadRazorpayScript();
-      if (!window.Razorpay) {
-        throw new Error(
-          "Razorpay SDK did not load (ad-block/shields?). Disable and retry."
-        );
-      }
+      if (!window.Razorpay) throw new Error("Razorpay SDK blocked/failed to load.");
 
       const rp = new window.Razorpay({
         key: key_id || cfg.key_id,
@@ -162,15 +153,16 @@ export default function PaymentsPage() {
             const vj = await vr.json().catch(() => ({}));
             if (!vr.ok) throw new Error(vj?.detail || `Verify ${vr.status}`);
             setMsg("Subscription active! 🎉");
-            setMe((m) => (m ? { ...m, is_paid: true } : m));
+            setMe(m => m ? { ...m, is_paid: true } : m);
           } catch (e: any) {
             setErr(e?.message || "Verification failed");
           }
         },
       });
+
       rp.open();
     } catch (e: any) {
-      setErr(String(e.message || e));
+      setErr(String(e?.message || e));
     } finally {
       setBusy(false);
     }
@@ -178,39 +170,23 @@ export default function PaymentsPage() {
 
   async function cancelNow() {
     const t = getToken();
-    if (!t) {
-      setErr("No token found. Please log in again and retry.");
-      return;
-    }
-    const sub_id = (() => {
-      try {
-        return localStorage.getItem("rzp_sub_id") || "";
-      } catch {
-        return "";
-      }
-    })();
-    if (!sub_id) {
-      setErr("No saved subscription id found on this device.");
-      return;
-    }
-    setBusy(true);
-    setErr(null);
-    setMsg(null);
+    if (!t) { setErr("No token found. Please log in again."); return; }
+    const sub_id = (() => { try { return localStorage.getItem("rzp_sub_id") || ""; } catch { return ""; } })();
+    if (!sub_id) { setErr("No saved subscription id found on this device."); return; }
+
+    setBusy(true); setErr(null); setMsg(null);
     try {
       const r = await fetch(`${API_BASE}/api/payments/cancel`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${t}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
         body: JSON.stringify({ subscription_id: sub_id }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.detail || `Cancel ${r.status}`);
       setMsg("Subscription cancelled. You’re on Free now.");
-      setMe((m) => (m ? { ...m, is_paid: false } : m));
+      setMe(m => m ? { ...m, is_paid: false } : m);
     } catch (e: any) {
-      setErr(String(e.message || e));
+      setErr(String(e?.message || e));
     } finally {
       setBusy(false);
     }
@@ -223,9 +199,7 @@ export default function PaymentsPage() {
       <div style={card}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ margin: 0 }}>Upgrade your CAIO plan</h2>
-          <Link href="/dashboard" style={backLink}>
-            ← Back to dashboard
-          </Link>
+          <Link href="/dashboard" style={backLink}>← Back to dashboard</Link>
         </div>
 
         <div style={{ opacity: 0.75, marginBottom: 12 }}>
@@ -242,7 +216,7 @@ export default function PaymentsPage() {
             </ul>
 
             {!alreadyPro ? (
-              <button onClick={startSubscription} disabled={busy || !cfg} style={btnPrimary}>
+              <button onClick={startSubscription} disabled={busy || !cfg} style={btnPrimary} title={!cfg ? "Loading payment config…" : ""}>
                 {busy ? "Starting…" : "Start subscription"}
               </button>
             ) : (
@@ -265,9 +239,7 @@ export default function PaymentsPage() {
               <li>Custom integrations</li>
               <li>SLAs & onboarding</li>
             </ul>
-            <Link href="/contact" style={btnSecondary}>
-              Contact us
-            </Link>
+            <Link href="/contact" style={btnSecondary}>Contact us</Link>
           </div>
         </div>
 
@@ -277,6 +249,7 @@ export default function PaymentsPage() {
             <pre style={pre}>{err}</pre>
           </div>
         ) : null}
+
         {msg ? <div style={okBox}>{msg}</div> : null}
 
         <div style={helpBox}>
