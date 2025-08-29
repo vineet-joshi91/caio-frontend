@@ -1,70 +1,134 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
+const API = process.env.NEXT_PUBLIC_API_BASE ?? '';
 
 export default function SignupPage() {
-  const r = useRouter();
-  const [form, setForm] = useState({ name: "", organisation: "", email: "", password: "" });
+  const router = useRouter();
+  const [name, setName] = useState('');
+  const [org, setOrg] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
-  function saveToken(token: string) {
-    document.cookie = `token=${encodeURIComponent(token)}; Path=/; Max-Age=2592000; SameSite=Lax`;
-    localStorage.setItem("token", token);
-  }
-
-  async function submit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setErr(null); setBusy(true);
+    setErr(null);
+    setLoading(true);
+
     try {
-      const res = await fetch(`${API_BASE}/api/signup`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+      const res = await fetch(`${API}/api/login`, {
+        method: 'POST', // <-- IMPORTANT: backend expects POST /api/login
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.trim(),
+          password: password,   // backend may ignore; safe to include
+          name: name.trim(),
+          org: org.trim(),
+          source: 'signup',     // harmless metadata
+        }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
-      if (data?.access_token) saveToken(data.access_token);
-      r.replace("/dashboard");
+
+      if (!res.ok) {
+        const text = await res.text();
+        // 405 => wrong method/path; 401/400 => validation
+        throw new Error(text || `Sign up failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      // Expect something like { access_token: '...' }
+      const token = data.access_token || data.token || '';
+      if (!token) throw new Error('No token returned from server');
+
+      localStorage.setItem('access_token', token);
+      // optional: keep legacy key too if other pages read it
+      localStorage.setItem('token', token);
+
+      router.push('/dashboard');
     } catch (e: any) {
-      setErr(String(e.message || e));
+      setErr(e.message || 'Something went wrong');
     } finally {
-      setBusy(false);
+      setLoading(false);
     }
   }
 
   return (
-    <main style={wrap}>
-      <form onSubmit={submit} style={card}>
-        <h1 style={{margin:"0 0 10px"}}>Create your account</h1>
-        <label style={label}>Name
-          <input required value={form.name} onChange={e=>setForm({...form, name:e.target.value})} style={input} />
-        </label>
-        <label style={label}>Organisation
-          <input value={form.organisation} onChange={e=>setForm({...form, organisation:e.target.value})} style={input} />
-        </label>
-        <label style={label}>Work email
-          <input required type="email" value={form.email} onChange={e=>setForm({...form, email:e.target.value})} style={input} />
-        </label>
-        <label style={label}>Password
-          <input required type="password" value={form.password} onChange={e=>setForm({...form, password:e.target.value})} style={input} />
-        </label>
-        {err ? <div style={errBox}>{err}</div> : null}
-        <button disabled={busy} type="submit" style={btnPrimary}>{busy ? "Creating..." : "Sign up"}</button>
-        <div style={{marginTop:10, fontSize:13}}>
-          Already have an account? <a href="/login" style={{color:"#93c5fd"}}>Log in</a>
+    <div className="min-h-screen flex items-center justify-center px-4">
+      <form
+        onSubmit={onSubmit}
+        className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6 space-y-4"
+      >
+        <h1 className="text-xl font-semibold">Create your account</h1>
+
+        <div className="space-y-1">
+          <label className="text-sm text-zinc-400">Name</label>
+          <input
+            className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 outline-none focus:border-zinc-500"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="Jane Doe"
+            required
+          />
         </div>
+
+        <div className="space-y-1">
+          <label className="text-sm text-zinc-400">Organisation</label>
+          <input
+            className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 outline-none focus:border-zinc-500"
+            value={org}
+            onChange={e => setOrg(e.target.value)}
+            placeholder="Acme Inc."
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-sm text-zinc-400">Work email</label>
+          <input
+            type="email"
+            className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 outline-none focus:border-zinc-500"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder="you@company.com"
+            required
+            autoComplete="email"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-sm text-zinc-400">Password</label>
+          <input
+            type="password"
+            className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 outline-none focus:border-zinc-500"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            placeholder="••••••••"
+            required
+            autoComplete="new-password"
+          />
+        </div>
+
+        {err && (
+          <div className="text-sm text-red-300 rounded-lg border border-red-800 bg-red-900/30 px-3 py-2">
+            {err}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full rounded-lg py-2 font-medium bg-gradient-to-r from-sky-500 to-emerald-500 text-white disabled:opacity-60"
+        >
+          {loading ? 'Creating...' : 'Sign up'}
+        </button>
+
+        <p className="text-xs text-zinc-500">
+          Already have an account?{' '}
+          <a className="underline" href="/login">Log in</a>
+        </p>
       </form>
-    </main>
+    </div>
   );
 }
-
-const wrap: React.CSSProperties = {minHeight:"100vh",display:"grid",placeItems:"center",background:"#0b0f1a",color:"#e5e7eb"};
-const card: React.CSSProperties = {width:360, padding:20, border:"1px solid #243044", borderRadius:12, background:"#0e1320"};
-const label: React.CSSProperties = {display:"block", marginTop:10};
-const input: React.CSSProperties = {width:"100%", padding:"10px 12px", borderRadius:10, border:"1px solid #2b3650", background:"#0f172a", color:"#e5e7eb"};
-const btnPrimary: React.CSSProperties = {width:"100%", marginTop:14, padding:"10px 12px", borderRadius:10, border:"0", background:"linear-gradient(90deg,#8B5CF6,#22D3EE,#22C55E)", color:"#fff", fontWeight:800, cursor:"pointer"};
-const errBox: React.CSSProperties = {marginTop:10, padding:"8px 10px", borderRadius:8, background:"#3a1f1f", border:"1px solid #5a3535", color:"#fecaca", fontSize:13};
