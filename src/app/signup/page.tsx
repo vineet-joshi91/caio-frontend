@@ -5,6 +5,10 @@ import { useRouter } from 'next/navigation';
 
 const API = process.env.NEXT_PUBLIC_API_BASE ?? '';
 
+type FastAPIError =
+  | { detail?: string }
+  | { detail?: Array<{ msg?: string; loc?: (string | number)[]; type?: string }> };
+
 export default function SignupPage() {
   const router = useRouter();
   const [name, setName] = useState('');
@@ -14,39 +18,64 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  function extractError(e: any): string {
+    try {
+      if (!e) return 'Something went wrong';
+      if (typeof e === 'string') return e;
+      if (e.detail) {
+        if (typeof e.detail === 'string') return e.detail;
+        if (Array.isArray(e.detail)) {
+          return (
+            e.detail
+              .map((d: any) => {
+                const where = Array.isArray(d?.loc) ? d.loc.join('.') : '';
+                return d?.msg ? `${where}: ${d.msg}` : where;
+              })
+              .filter(Boolean)
+              .join('; ') || 'Validation error'
+          );
+        }
+      }
+      return 'Unexpected error';
+    } catch {
+      return 'Unexpected error';
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     setLoading(true);
 
     try {
+      // Backend expects { username, password, ... }
       const res = await fetch(`${API}/api/login`, {
-        method: 'POST', // <-- IMPORTANT: backend expects POST /api/login
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: email.trim(),
-          password: password,   // backend may ignore; safe to include
-          name: name.trim(),
-          org: org.trim(),
-          source: 'signup',     // harmless metadata
+          username: email.trim(),   // <-- map email to username
+          password: password,       // <-- backend requires this field
+          name: name.trim(),        // optional; backend may ignore/save
+          org: org.trim(),          // optional
+          source: 'signup',
         }),
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        // 405 => wrong method/path; 401/400 => validation
-        throw new Error(text || `Sign up failed (${res.status})`);
+        let msg = `Sign up failed (${res.status})`;
+        try {
+          const data: FastAPIError = await res.json();
+          msg = extractError(data);
+        } catch {}
+        throw new Error(msg);
       }
 
       const data = await res.json();
-      // Expect something like { access_token: '...' }
       const token = data.access_token || data.token || '';
       if (!token) throw new Error('No token returned from server');
 
       localStorage.setItem('access_token', token);
-      // optional: keep legacy key too if other pages read it
-      localStorage.setItem('token', token);
-
+      localStorage.setItem('token', token); // keep legacy key if other pages read it
       router.push('/dashboard');
     } catch (e: any) {
       setErr(e.message || 'Something went wrong');
@@ -111,7 +140,7 @@ export default function SignupPage() {
         </div>
 
         {err && (
-          <div className="text-sm text-red-300 rounded-lg border border-red-800 bg-red-900/30 px-3 py-2">
+          <div className="text-sm text-red-300 rounded-lg border border-red-800 bg-red-900/30 px-3 py-2 whitespace-pre-wrap">
             {err}
           </div>
         )}
