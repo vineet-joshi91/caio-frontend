@@ -8,13 +8,13 @@ const API_BASE =
   "https://caio-backend.onrender.com";
 
 type Me = { email: string; is_paid?: boolean };
-type Cfg = {
+type SubConfig = {
   mode: "razorpay";
-  currency: "INR";
-  amount_major: number;
-  amount: number;
-  interval: string;
-  key_id: string;
+  key_id: string | null;
+  has_secret: boolean;
+  interval: string;                // e.g. "every 1 monthly"
+  defaultCurrency: string;         // "INR" or "USD"
+  pricing: Record<string, { amount_major: number; symbol?: string }>;
 };
 
 declare global {
@@ -60,10 +60,17 @@ async function loadRazorpayScript(): Promise<void> {
 
 export default function PaymentsPage() {
   const [me, setMe] = useState<Me | null>(null);
-  const [cfg, setCfg] = useState<Cfg | null>(null);
+  const [cfg, setCfg] = useState<SubConfig | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const currentPrice = (() => {
+    if (!cfg) return null;
+    const entry = cfg.pricing?.[cfg.defaultCurrency];
+    if (!entry || typeof entry.amount_major !== "number") return null;
+    return { currency: cfg.defaultCurrency, amount_major: entry.amount_major };
+  })();
 
   useEffect(() => {
     (async () => {
@@ -83,13 +90,13 @@ export default function PaymentsPage() {
         if (!pr.ok) throw new Error(pj?.detail || `Profile ${pr.status}`);
         setMe({ email: pj.email, is_paid: !!pj.is_paid });
 
-        // Subscription config
+        // Subscription config (key, currency, pricing map)
         const cr = await fetch(`${API_BASE}/api/payments/subscription-config`, {
           cache: "no-store",
         });
-        const cj = await cr.json().catch(() => ({}));
-        if (!cr.ok) throw new Error(cj?.detail || `Config ${cr.status}`);
-        setCfg(cj as Cfg);
+        const cj = (await cr.json().catch(() => ({}))) as SubConfig;
+        if (!cr.ok) throw new Error((cj as any)?.detail || `Config ${cr.status}`);
+        setCfg(cj);
       } catch (e: any) {
         setErr(String(e?.message || e));
       }
@@ -101,90 +108,66 @@ export default function PaymentsPage() {
     const t = getToken();
     if (!t) { setErr("No token found. Please log in again."); return; }
     if (!cfg) { setErr("Payment config not loaded yet. Try again."); return; }
+    if (!cfg.key_id) { setErr("Razorpay key missing on server (key_id)."); return; }
 
     setBusy(true); setErr(null); setMsg(null);
 
     try {
-      // 1) Create subscription on backend (POST → fallback to GET on 405)
-      let res = await fetch(`${API_BASE}/api/payments/subscribe`, {
+      // Create subscription on backend (correct route)
+      const body = {
+        currency: cfg.defaultCurrency,
+        notes: { email: me?.email || "" },
+      };
+      const res = await fetch(`${API_BASE}/api/payments/subscription/create`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${t}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+        body: JSON.stringify(body),
       });
-
-      if (res.status === 405) {
-        console.log("[payments] POST /subscribe returned 405 — retrying GET");
-        res = await fetch(`${API_BASE}/api/payments/subscribe`, {
-          headers: { Authorization: `Bearer ${t}` },
-        });
-      }
 
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j?.detail || `Subscribe ${res.status}`);
 
-      const { subscription_id, key_id } = j as {
+      const { subscription_id, currency, amount_major } = j as {
         subscription_id: string;
-        key_id: string;
+        currency: string;
+        amount_major: number;
       };
 
       try { localStorage.setItem("rzp_sub_id", subscription_id); } catch {}
 
-      // 2) Load SDK + open checkout
+      // Open Razorpay checkout
       await loadRazorpayScript();
       if (!window.Razorpay) throw new Error("Razorpay SDK blocked/failed to load.");
 
       const rp = new window.Razorpay({
-        key: key_id || cfg.key_id,
+        key: cfg.key_id,
         subscription_id,
         name: "CAIO Pro",
-        description: `${cfg.currency} ${cfg.amount_major} / ${cfg.interval}`,
+        description: `${currency} ${amount_major} / ${cfg.interval}`,
         theme: { color: "#0ea5e9" },
         prefill: { email: me?.email || "" },
         modal: { ondismiss: () => setMsg("Checkout closed.") },
         handler: async (resp: any) => {
+          // Try a verify endpoint if/when we add it; otherwise, rely on Razorpay webhook.
           try {
             const vr = await fetch(`${API_BASE}/api/payments/verify`, {
               method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${t}`,
-              },
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
               body: JSON.stringify(resp),
             });
-            const vj = await vr.json().catch(() => ({}));
-            if (!vr.ok) throw new Error(vj?.detail || `Verify ${vr.status}`);
-            setMsg("Subscription active! 🎉");
-            setMe(m => m ? { ...m, is_paid: true } : m);
-          } catch (e: any) {
-            setErr(e?.message || "Verification failed");
+            if (vr.ok) {
+              setMsg("Subscription active! 🎉");
+              setMe(m => m ? { ...m, is_paid: true } : m);
+            } else {
+              setMsg("Payment captured. Your account will upgrade automatically once the webhook confirms.");
+            }
+          } catch {
+            setMsg("Payment captured. Your account will upgrade automatically once the webhook confirms.");
           }
         },
       });
 
       rp.open();
-    } catch (e: any) {
-      setErr(String(e?.message || e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function cancelNow() {
-    const t = getToken();
-    if (!t) { setErr("No token found. Please log in again."); return; }
-    const sub_id = (() => { try { return localStorage.getItem("rzp_sub_id") || ""; } catch { return ""; } })();
-    if (!sub_id) { setErr("No saved subscription id found on this device."); return; }
-
-    setBusy(true); setErr(null); setMsg(null);
-    try {
-      const r = await fetch(`${API_BASE}/api/payments/cancel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
-        body: JSON.stringify({ subscription_id: sub_id }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.detail || `Cancel ${r.status}`);
-      setMsg("Subscription cancelled. You’re on Free now.");
-      setMe(m => m ? { ...m, is_paid: false } : m);
     } catch (e: any) {
       setErr(String(e?.message || e));
     } finally {
@@ -216,18 +199,24 @@ export default function PaymentsPage() {
             </ul>
 
             {!alreadyPro ? (
-              <button onClick={startSubscription} disabled={busy || !cfg} style={btnPrimary} title={!cfg ? "Loading payment config…" : ""}>
+              <button
+                onClick={startSubscription}
+                disabled={busy || !cfg}
+                style={btnPrimary}
+                title={!cfg ? "Loading payment config…" : ""}
+              >
                 {busy ? "Starting…" : "Start subscription"}
               </button>
             ) : (
-              <button onClick={cancelNow} disabled={busy} style={{ ...btnSecondary, background: "#ef4444" }}>
-                Cancel subscription (immediate)
+              // Hidden for now: backend cancel route not implemented yet
+              <button disabled style={{ ...btnSecondary, opacity: 0.5 }} title="Cancel will be available soon">
+                Cancel subscription
               </button>
             )}
 
-            {cfg ? (
+            {currentPrice ? (
               <div style={{ opacity: 0.7, fontSize: 12, marginTop: 6 }}>
-                {cfg.currency} {cfg.amount_major} / {cfg.interval} · via Razorpay
+                {currentPrice.currency} {currentPrice.amount_major} / {cfg?.interval} · via Razorpay
               </div>
             ) : null}
           </div>
@@ -269,7 +258,7 @@ const ul: React.CSSProperties = { margin: "10px 0 14px 18px" };
 const btnPrimary: React.CSSProperties = { display: "inline-block", padding: "10px 14px", borderRadius: 10, border: "0", background: "#059669", color: "#fff", fontWeight: 700 };
 const btnSecondary: React.CSSProperties = { display: "inline-block", padding: "10px 14px", border: "0", color: "#fff", fontWeight: 700, textDecoration: "none" };
 const backLink: React.CSSProperties = { fontSize: 14, color: "#93c5fd", textDecoration: "none", border: "1px solid #243044", padding: "6px 10px", borderRadius: 8, background: "#0f172a" };
-const errBox: React.CSSProperties = { marginTop: 16, padding: 12, borderRadius: 10, border: "1px solid #5a3535", background: "#331b1b" };
-const okBox: React.CSSProperties = { marginTop: 12, padding: 10, borderRadius: 10, border: "1px solid #2b4f2a", background: "#163018" };
-const helpBox: React.CSSProperties = { marginTop: 14, padding: 10, borderRadius: 10, border: "1px solid #244055", background: "#0c1526", fontSize: 14 };
-const pre: React.CSSProperties = { whiteSpace: "pre-wrap", wordBreak: "break-word", background: "#0d1220", border: "1px solid #23304a", borderRadius: 8, padding: 10, fontSize: 12 };
+const errBox: React.CSSProperties = { marginTop: 16, padding: 12, borderRadius: 10, border: "1px solid #7f1d1d", background: "#1f0b0b" };
+const okBox: React.CSSProperties  = { marginTop: 16, padding: 12, borderRadius: 10, border: "1px solid #14532d", background: "#0b1f14" };
+const pre: React.CSSProperties     = { margin: 0, whiteSpace: "pre-wrap", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace", fontSize: 12 };
+const helpBox: React.CSSProperties = { marginTop: 16, padding: 12, borderRadius: 10, border: "1px solid #243044", background: "#0f172a" };
