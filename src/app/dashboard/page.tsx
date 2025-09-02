@@ -20,7 +20,10 @@ type Result =
 function withTimeout<T>(p: Promise<T>, ms = 120000): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
-    p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+    p.then(
+      v => { clearTimeout(t); resolve(v); },
+      e => { clearTimeout(t); reject(e); }
+    );
   });
 }
 
@@ -281,8 +284,6 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
   const [result, setResult] = useState<Result | null>(null);
   const [friendlyErr, setFriendlyErr] = useState<string | null>(null);
 
-  const [exportBusy, setExportBusy] = useState<"pdf" | "docx" | null>(null); // NEW
-
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
@@ -328,46 +329,51 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
     }
   }
 
-  // ---------- NEW: export helpers ----------
-  function downloadBlob(filename: string, blob: Blob) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
+  // ---------- Export helpers ----------
+  const [exporting, setExporting] = useState<"docx" | "pdf" | null>(null);
+  const [exportErr, setExportErr] = useState<string | null>(null);
 
-  async function exportBrief(fmt: "pdf" | "docx") {
-    if (!result || result.status === "error") return;
-    if (!isPaid) {
-      window.location.assign("/payments");
-      return;
-    }
-    const title = (result.title || "CAIO Brief").toString().replace(/[^\w\s-]+/g, "").slice(0, 60) || "CAIO Brief";
-    const markdown = result.summary || "";
-    setExportBusy(fmt);
+  async function exportFile(kind: "docx" | "pdf") {
+    if (!result || (result as any)?.status === "error") return;
+    setExportErr(null);
+    setExporting(kind);
     try {
-      const res = await withTimeout(fetch(`${API_BASE}/api/export/${fmt}`, {
+      // Ensure POST to avoid 405; include token if available
+      const endpoint = kind === "docx" ? "/api/export/docx" : "/api/export/pdf";
+      const res = await withTimeout(fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify({ title, markdown }),
-      }), 60000);
-      if (!res.ok) throw new Error(await res.text());
+        body: JSON.stringify({
+          // send whatever the backend needs; keep minimal to avoid breaking existing handler
+          title: (result as any)?.title ?? "CAIO Report",
+          summary: (result as any)?.summary ?? "",
+        }),
+      }), 120000);
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Export failed (${res.status})`);
+      }
+
+      // Stream and download
       const blob = await res.blob();
-      downloadBlob(`${title}.${fmt === "pdf" ? "pdf" : "docx"}`, blob);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = kind === "docx" ? "CAIO-Report.docx" : "CAIO-Report.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     } catch (e: any) {
-      setFriendlyErr(e?.message || "Export failed. Please try again.");
+      setExportErr(e?.message || "Export failed. Please try again.");
     } finally {
-      setExportBusy(null);
+      setExporting(null);
     }
   }
-  // ----------------------------------------
 
   return (
     <section className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800 space-y-5">
@@ -434,61 +440,66 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
 
       {/* results */}
       {result && (
-        <div className="mt-3">
+        <div className="mt-3 space-y-3">
+          {/* Export bar (visible for both Demo and Pro) */}
+          <ExportToolbar
+            canExport={(result.status === "ok" || result.status === "demo") && !!(result.summary || (result as any).title)}
+            exportingKind={exporting}
+            onExportDocx={() => exportFile("docx")}
+            onExportPdf={() => exportFile("pdf")}
+            errMsg={exportErr}
+          />
+
           {result.status === "error" ? (
             <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-200">
               <h3 className="font-semibold">{result.title || "Analysis Unavailable"}</h3>
               <p className="text-sm mt-1">{result.message}</p>
             </div>
           ) : result.status === "demo" ? (
-            <>
-              <GroupedReport title={result.title || "Demo Mode"} md={result.summary || ""} demo seedText={text} fileName={file?.name} />
-              {/* ---- NEW: export toolbar (disabled on demo) ---- */}
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  disabled
-                  className="px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 cursor-not-allowed"
-                  title="Upgrade to export"
-                >
-                  Export PDF
-                </button>
-                <button
-                  disabled
-                  className="px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 cursor-not-allowed"
-                  title="Upgrade to export"
-                >
-                  Export DOCX
-                </button>
-                <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
-                  Upgrade to export
-                </Link>
-              </div>
-            </>
+            <GroupedReport title={result.title || "Demo Mode"} md={result.summary || ""} demo seedText={text} fileName={file?.name} />
           ) : (
-            <>
-              <GroupedReport title={result.title || "Analysis Result"} md={result.summary || ""} />
-              {/* ---- NEW: export toolbar (enabled on Pro) ---- */}
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => exportBrief("pdf")}
-                  disabled={!isPaid || exportBusy === "pdf"}
-                  className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60"
-                >
-                  {exportBusy === "pdf" ? "Exporting…" : "Export PDF"}
-                </button>
-                <button
-                  onClick={() => exportBrief("docx")}
-                  disabled={!isPaid || exportBusy === "docx"}
-                  className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60"
-                >
-                  {exportBusy === "docx" ? "Exporting…" : "Export DOCX"}
-                </button>
-              </div>
-            </>
+            <GroupedReport title={result.title || "Analysis Result"} md={result.summary || ""} />
           )}
         </div>
       )}
     </section>
+  );
+}
+
+/* ---------- Export toolbar component ---------- */
+function ExportToolbar({
+  canExport,
+  exportingKind,
+  onExportDocx,
+  onExportPdf,
+  errMsg,
+}: {
+  canExport: boolean;
+  exportingKind: "docx" | "pdf" | null;
+  onExportDocx: () => void;
+  onExportPdf: () => void;
+  errMsg: string | null;
+}) {
+  if (!canExport) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 p-3 rounded-lg border border-zinc-800 bg-zinc-900/60">
+      <span className="text-sm opacity-85 mr-2">Export:</span>
+      <button
+        onClick={onExportDocx}
+        disabled={exportingKind !== null}
+        className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60 text-sm"
+      >
+        {exportingKind === "docx" ? "Preparing DOCX…" : "Export DOCX"}
+      </button>
+      <button
+        onClick={onExportPdf}
+        disabled={exportingKind !== null}
+        className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60 text-sm"
+      >
+        {exportingKind === "pdf" ? "Preparing PDF…" : "Export PDF"}
+      </button>
+      {errMsg && <span className="text-xs text-red-300 ml-2">{errMsg}</span>}
+    </div>
   );
 }
 
