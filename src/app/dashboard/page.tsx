@@ -281,6 +281,8 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
   const [result, setResult] = useState<Result | null>(null);
   const [friendlyErr, setFriendlyErr] = useState<string | null>(null);
 
+  const [exportBusy, setExportBusy] = useState<"pdf" | "docx" | null>(null); // NEW
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
@@ -325,6 +327,47 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
       setBusy(false);
     }
   }
+
+  // ---------- NEW: export helpers ----------
+  function downloadBlob(filename: string, blob: Blob) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function exportBrief(fmt: "pdf" | "docx") {
+    if (!result || result.status === "error") return;
+    if (!isPaid) {
+      window.location.assign("/payments");
+      return;
+    }
+    const title = (result.title || "CAIO Brief").toString().replace(/[^\w\s-]+/g, "").slice(0, 60) || "CAIO Brief";
+    const markdown = result.summary || "";
+    setExportBusy(fmt);
+    try {
+      const res = await withTimeout(fetch(`${API_BASE}/api/export/${fmt}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ title, markdown }),
+      }), 60000);
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      downloadBlob(`${title}.${fmt === "pdf" ? "pdf" : "docx"}`, blob);
+    } catch (e: any) {
+      setFriendlyErr(e?.message || "Export failed. Please try again.");
+    } finally {
+      setExportBusy(null);
+    }
+  }
+  // ----------------------------------------
 
   return (
     <section className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800 space-y-5">
@@ -398,9 +441,50 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
               <p className="text-sm mt-1">{result.message}</p>
             </div>
           ) : result.status === "demo" ? (
-            <GroupedReport title={result.title || "Demo Mode"} md={result.summary || ""} demo seedText={text} fileName={file?.name} />
+            <>
+              <GroupedReport title={result.title || "Demo Mode"} md={result.summary || ""} demo seedText={text} fileName={file?.name} />
+              {/* ---- NEW: export toolbar (disabled on demo) ---- */}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  disabled
+                  className="px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 cursor-not-allowed"
+                  title="Upgrade to export"
+                >
+                  Export PDF
+                </button>
+                <button
+                  disabled
+                  className="px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 cursor-not-allowed"
+                  title="Upgrade to export"
+                >
+                  Export DOCX
+                </button>
+                <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
+                  Upgrade to export
+                </Link>
+              </div>
+            </>
           ) : (
-            <GroupedReport title={result.title || "Analysis Result"} md={result.summary || ""} />
+            <>
+              <GroupedReport title={result.title || "Analysis Result"} md={result.summary || ""} />
+              {/* ---- NEW: export toolbar (enabled on Pro) ---- */}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => exportBrief("pdf")}
+                  disabled={!isPaid || exportBusy === "pdf"}
+                  className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60"
+                >
+                  {exportBusy === "pdf" ? "Exporting…" : "Export PDF"}
+                </button>
+                <button
+                  onClick={() => exportBrief("docx")}
+                  disabled={!isPaid || exportBusy === "docx"}
+                  className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60"
+                >
+                  {exportBusy === "docx" ? "Exporting…" : "Export DOCX"}
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
