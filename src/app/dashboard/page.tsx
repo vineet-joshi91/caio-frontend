@@ -260,12 +260,25 @@ export default function DashboardPage() {
 
 /* ---------------- Analyze card ---------------- */
 
+/* ---------------- Analyze card (with 429 limit banner) ---------------- */
+
 function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
+  type LimitInfo = {
+    plan?: string;
+    used?: number;
+    limit?: number;
+    remaining?: number;
+    reset_at?: string; // ISO string from backend
+    title?: string;
+    message?: string;
+  };
+
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [friendlyErr, setFriendlyErr] = useState<string | null>(null);
+  const [limit, setLimit] = useState<LimitInfo | null>(null);   // NEW: daily cap banner
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -279,8 +292,25 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
     const f = e.dataTransfer.files?.[0]; if (f) setFile(f);
   }
 
+  function resetErrors() {
+    setFriendlyErr(null);
+    setLimit(null);
+    setResult(null);
+  }
+
+  function formatUtcShort(iso?: string) {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      const hh = String(d.getUTCHours()).padStart(2, "0");
+      const mm = String(d.getUTCMinutes()).padStart(2, "0");
+      return `${hh}:${mm} UTC`;
+    } catch { return ""; }
+  }
+
   async function run() {
-    setBusy(true); setFriendlyErr(null); setResult(null);
+    setBusy(true);
+    resetErrors();
     try {
       const fd = new FormData();
       if (text.trim()) fd.append("text", text.trim());
@@ -300,8 +330,19 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
       let parsed: any = {};
       try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
 
+      // NEW: explicit 429 handling with banner
+      if (res.status === 429) {
+        setLimit({
+          plan: parsed?.plan, used: parsed?.used, limit: parsed?.limit,
+          remaining: parsed?.remaining, reset_at: parsed?.reset_at,
+          title: parsed?.title || "Daily limit reached",
+          message: parsed?.message || "You’ve hit today’s usage limit.",
+        });
+        return;
+      }
+
       if (!res.ok) {
-        const message = parsed?.message || raw || "Something went wrong while analyzing your request.";
+        const message = parsed?.message || parsed?.detail || raw || "Something went wrong while analyzing your request.";
         setResult({ status: "error", title: "Analysis Unavailable", message, action: "Please try again later." });
         return;
       }
@@ -318,12 +359,43 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
       }
     } catch (e: any) {
       setFriendlyErr(e?.message || "Something went wrong. Please try again.");
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <section className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800 space-y-5">
       <h2 className="text-xl font-semibold">Quick analyze</h2>
+
+      {/* NEW: daily limit banner */}
+      {limit && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="font-semibold">{limit.title || "Daily limit reached"}</h3>
+              <p className="text-sm mt-1">
+                {limit.message}
+                {typeof limit.used === "number" && typeof limit.limit === "number" && (
+                  <> You’ve used <b>{limit.used}</b> of <b>{limit.limit}</b> today.</>
+                )}
+                {limit.reset_at && <> Resets at <b>{formatUtcShort(limit.reset_at)}</b>.</>}
+              </p>
+            </div>
+            <button onClick={() => setLimit(null)} className="text-xs underline hover:no-underline">
+              Dismiss
+            </button>
+          </div>
+          {/* Gentle nudge for Demo only */}
+          {limit.plan === "demo" && (
+            <div className="mt-2">
+              <a href="/payments" className="inline-block text-xs px-2.5 py-1 rounded-md bg-amber-400/20 border border-amber-400/40 hover:bg-amber-400/30">
+                Upgrade for higher daily limits
+              </a>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* dropzone */}
       <div
@@ -354,7 +426,6 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
             <span className="opacity-90">{file.name}</span>
             <span className="opacity-60"> • {(file.size / 1024).toFixed(1)} KB</span>
           </div>
-          <button onClick={() => setFile(null)} className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-xs">Remove</button>
         </div>
       )}
 
