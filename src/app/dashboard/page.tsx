@@ -11,7 +11,8 @@ const API_BASE =
   "https://caio-backend.onrender.com";
 const NETLIFY_HOME = "https://caioai.netlify.app";
 
-type Me = { email: string; is_admin: boolean; is_paid: boolean; created_at?: string };
+type Tier = "admin" | "premium" | "pro" | "demo";
+type Me = { email: string; is_admin: boolean; is_paid: boolean; created_at?: string; tier?: Tier };
 type Result =
   | { status: "demo"; title: string; summary: string; tip?: string }
   | { status: "error"; title: string; message: string; action?: string }
@@ -177,7 +178,13 @@ export default function DashboardPage() {
         );
         if (!res.ok) throw new Error(await res.text());
         const j = await res.json();
-        setMe({ email: j.email, is_admin: !!j.is_admin, is_paid: !!j.is_paid, created_at: j.created_at });
+        setMe({
+          email: j.email,
+          is_admin: !!j.is_admin,
+          is_paid: !!j.is_paid,
+          created_at: j.created_at,
+          tier: j.tier as Tier,     // NEW: store tier from backend
+        });
       } catch (e: any) {
         setErr(e?.message || "Couldn’t load your profile. Please log in again.");
       } finally { setBusy(false); }
@@ -189,6 +196,16 @@ export default function DashboardPage() {
     document.cookie = "token=; path=/; max-age=0; SameSite=Lax";
     window.location.assign(NETLIFY_HOME);
   }
+
+  // --- plan badge derived from tier (Admin/Premium => "Premium", Pro => "Pro", else Demo)
+  const planFromTier = (t?: string) => (t === "admin" || t === "premium" ? "Premium" : t === "pro" ? "Pro" : "Demo");
+  const plan = planFromTier(me?.tier);
+  const planClass =
+    plan === "Premium"
+      ? "bg-emerald-500/15 border-emerald-400/40 text-emerald-200"
+      : plan === "Pro"
+      ? "bg-sky-500/15 border-sky-400/40 text-sky-200"
+      : "bg-amber-500/15 border-amber-400/40 text-amber-200";
 
   return (
     <main className="min-h-screen p-6 bg-zinc-950 text-zinc-100">
@@ -205,12 +222,8 @@ export default function DashboardPage() {
             <div className="flex items-center gap-2">
               {token ? (
                 <>
-                  <span className={`px-2.5 py-1 rounded-full text-xs tracking-wide border ${
-                    me?.is_paid
-                      ? "bg-emerald-500/15 border-emerald-400/40 text-emerald-200"
-                      : "bg-amber-500/15 border-amber-400/40 text-amber-200"
-                  }`}>
-                    {me?.is_paid ? "Pro" : "Demo"}
+                  <span className={`px-2.5 py-1 rounded-full text-xs tracking-wide border ${planClass}`}>
+                    {plan}
                   </span>
                   <button onClick={logout} className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-sm shadow">
                     Logout
@@ -224,7 +237,8 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {!me?.is_paid && token && (
+          {/* Hide upgrade link for Admin/Premium */}
+          {token && !(me?.tier === "admin" || me?.tier === "premium") && !me?.is_paid && (
             <div className="mt-3">
               <Link href="/payments" className="inline-block text-blue-300 underline hover:text-blue-200">
                 Upgrade to Pro
