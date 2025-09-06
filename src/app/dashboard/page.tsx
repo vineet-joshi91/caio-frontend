@@ -19,7 +19,6 @@ type Result =
   | { status: "ok"; title?: string; summary?: string; [k: string]: any };
 
 /* ---------------- Utils ---------------- */
-
 function withTimeout<T>(p: Promise<T>, ms = 120000): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
@@ -29,7 +28,6 @@ function withTimeout<T>(p: Promise<T>, ms = 120000): Promise<T> {
     );
   });
 }
-
 function readTokenSafe(): string {
   try {
     const ls = localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -42,7 +40,6 @@ function readTokenSafe(): string {
 }
 
 /* ---------- Markdown helpers (spacing + parsing) ---------- */
-
 function normalizeAnalysis(md: string) {
   let s = (md ?? "").trim();
   s = s.replace(/\n(?=###\s+)/g, "\n\n");
@@ -52,17 +49,13 @@ function normalizeAnalysis(md: string) {
   s = s.replace(/\n{3,}/g, "\n\n");
   return s;
 }
-
 type BrainParse = { name: string; insights?: string; recommendations?: string; };
-
 function parseBrains(md: string): BrainParse[] {
   const sections = md
     .split(/\n(?=###\s+[A-Z]{2,}.*$)/gm)
     .map((s) => s.trim())
     .filter(Boolean);
-
   if (sections.length === 0) return [];
-
   return sections.map((sec, i) => {
     const headerMatch = sec.match(/^###\s+(.+)$/m);
     const name = (headerMatch ? headerMatch[1] : `Section ${i + 1}`).trim();
@@ -74,14 +67,12 @@ function parseBrains(md: string): BrainParse[] {
     return { name, insights: getBlock("Insights"), recommendations: getBlock("Recommendations") };
   });
 }
-
 function extractListItems(text: string): string[] {
   if (!text) return [];
   const cleaned = text.replace(/^[\s\S]*?(?=^\s*(?:\d+[.)]|[-*•])\s)/m, "");
   const parts = cleaned.split(/\n(?=\s*(?:\d+[.)]|[-*•])\s)/g);
   return parts.map((p) => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim()).filter(Boolean);
 }
-
 function sentences(text: string): string[] {
   const clean = text
     .replace(/^#+\s.*$/gm, " ")
@@ -90,7 +81,6 @@ function sentences(text: string): string[] {
     .trim();
   return clean.split(/(?<=[.!?])\s+(?=[A-Z(])/).filter((s) => s.length > 40);
 }
-
 function extractHeadingBlock(md: string, label: string): string {
   const re = new RegExp(`###\\s*${label}\\s*([\\s\\S]*?)(?=\\n###\\s*\\w+|$)`, "ig");
   let out = "";
@@ -98,12 +88,10 @@ function extractHeadingBlock(md: string, label: string): string {
   while ((m = re.exec(md))) out += (out ? "\n\n" : "") + (m[1] || "");
   return out.trim();
 }
-
 function textBeforeRecommendations(md: string): string {
   const idx = md.search(/###\s*Recommendations/i);
   return idx >= 0 ? md.slice(0, idx) : md;
 }
-
 function InlineMD({ text }: { text: string }) {
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ p: (props) => <span {...props} /> }}>
@@ -111,32 +99,26 @@ function InlineMD({ text }: { text: string }) {
     </ReactMarkdown>
   );
 }
-
 function truncateForDemo(text: string, maxChars = 120, teaser = " _…Upgrade to see the full item._") {
   const clean = text.replace(/\s+/g, " ").trim();
   if (clean.length <= maxChars) return clean + teaser;
   const clipped = clean.slice(0, maxChars).replace(/[\s,.-]+[^,.\s-]*$/, "");
   return clipped + teaser;
 }
-
 function deriveOneActionFromInsights(insights?: string): string | null {
   const first = extractListItems(insights || "")[0] || sentences(insights || "")[0];
   if (!first) return null;
   if (/^\s*\*\*.+?\*\*\s*:/.test(first)) return first;
   return `**Priority Action**: ${first}`;
 }
-
 function looksLikeDemo(text: string) {
   return /demo preview|upgrade to pro|brains used/i.test(text || "");
 }
-
 function synthesizeFromContext(seedText: string, fileName?: string) {
   const src = `${seedText || ""} ${fileName || ""}`.toLowerCase();
-
   const hasRevenue = /(revenue|forecast|projection|budget|p&l|profit|invoice|cash\s?flow|collections|ds[o0])/i.test(src);
   const hasHiring = /(hiring|recruit|offer|headcount|attrition|engagement|talent|people)/i.test(src);
   const hasOps = /(ops|operations|sla|throughput|backlog|process|capacity)/i.test(src);
-
   const insight = hasRevenue
     ? "**Liquidity exposure from slow collections**: the document context suggests revenue planning and payment timing; extend your cash planning by monitoring DSO and top-account ageing to avoid month-end crunches."
     : hasHiring
@@ -144,20 +126,16 @@ function synthesizeFromContext(seedText: string, fileName?: string) {
     : hasOps
     ? "**Throughput constraint**: there are signals of process load; identify the longest queue (bottleneck) and rebalance work-in-progress limits."
     : "**Execution risk**: the document hints at important changes; align owners, timelines, and a single KPI per workstream to prevent slippage.";
-
   const cfo = hasRevenue
     ? "**Shorten DSO by 3–5 days**: add early-payment discounts (1/10 net 30) for top 20 AR accounts, automate reminders at +3/+7/+14, and reconcile unapplied cash weekly to lift cash conversion."
     : "**Tighten spend governance**: enforce PO-before-invoice for vendors, and roll a weekly cash bridge (opening → ops → financing) to forecast runway with ±5% error.";
-
   const chro = hasHiring
     ? "**Stabilize offers & ramp**: set a 48-hour SLA for feedback, publish compensation bands in JD, and run ‘why-we-win/lose’ on offers to lift acceptance by 10–15%."
     : "**Lower regrettable attrition**: run quarterly stay-interviews for top 10% performers, add manager 1:1 scorecards, and flag teams with >2 back-to-back low eNPS for intervention.";
-
   return { insight, cfo, chro };
 }
 
 /* ---------------- Page ---------------- */
-
 export default function DashboardPage() {
   const router = useRouter();
   const [token, setToken] = useState<string>("");
@@ -169,7 +147,6 @@ export default function DashboardPage() {
     const t = readTokenSafe();
     setToken(t);
     if (!t) { setBusy(false); return; }
-
     (async () => {
       try {
         const res = await withTimeout(
@@ -183,7 +160,7 @@ export default function DashboardPage() {
           is_admin: !!j.is_admin,
           is_paid: !!j.is_paid,
           created_at: j.created_at,
-          tier: j.tier as Tier,     // NEW: store tier from backend
+          tier: j.tier as Tier,
         });
       } catch (e: any) {
         setErr(e?.message || "Couldn’t load your profile. Please log in again.");
@@ -191,13 +168,19 @@ export default function DashboardPage() {
     })();
   }, []);
 
+  /* NEW: Auto-redirect Admin/Premium to Chat Mode */
+  useEffect(() => {
+    if (!busy && token && (me?.tier === "admin" || me?.tier === "premium")) {
+      router.replace("/premium/chat");
+    }
+  }, [busy, token, me?.tier, router]);
+
   function logout() {
     try { localStorage.removeItem("access_token"); localStorage.removeItem("token"); } catch {}
     document.cookie = "token=; path=/; max-age=0; SameSite=Lax";
     window.location.assign(NETLIFY_HOME);
   }
 
-  // --- plan badge derived from tier (Admin/Premium => "Premium", Pro => "Pro", else Demo)
   const planFromTier = (t?: string) => (t === "admin" || t === "premium" ? "Premium" : t === "pro" ? "Pro" : "Demo");
   const plan = planFromTier(me?.tier);
   const planClass =
@@ -220,21 +203,9 @@ export default function DashboardPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {/* ADDED: Admin Mode button for admin tier only */}
-              {token && me?.tier === "admin" && (
-                <Link
-                  href="/admin"
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-sm shadow"
-                  title="View Admin-only analytics and user roster"
-                >
-                  Admin Mode
-                </Link>
-              )}
               {token ? (
                 <>
-                  <span className={`px-2.5 py-1 rounded-full text-xs tracking-wide border ${planClass}`}>
-                    {plan}
-                  </span>
+                  <span className={`px-2.5 py-1 rounded-full text-xs tracking-wide border ${planClass}`}>{plan}</span>
                   <button onClick={logout} className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-sm shadow">
                     Logout
                   </button>
@@ -246,8 +217,7 @@ export default function DashboardPage() {
               )}
             </div>
           </div>
-
-          {/* Hide upgrade link for Admin/Premium */}
+          {/* hide upgrade for Admin/Premium */}
           {token && !(me?.tier === "admin" || me?.tier === "premium") && !me?.is_paid && (
             <div className="mt-3">
               <Link href="/payments" className="inline-block text-blue-300 underline hover:text-blue-200">
@@ -255,34 +225,31 @@ export default function DashboardPage() {
               </Link>
             </div>
           )}
+          {/* If redirecting, show a tiny hint (no flicker) */}
+          {token && (me?.tier === "admin" || me?.tier === "premium") && (
+            <div className="mt-2 text-xs opacity-70">Redirecting to Premium Chat…</div>
+          )}
         </header>
 
-        {/* states */}
+        {/* normal dashboard continues unchanged (Demo/Pro will see it) */}
+        {!busy && !err && !(me?.tier === "admin" || me?.tier === "premium") && (
+          <AnalyzeCard token={token} isPaid={!!me?.is_paid} />
+        )}
+
         {busy && token && (
           <div className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800">
             <div className="animate-pulse opacity-80">Loading…</div>
           </div>
         )}
-
         {err && (
           <div className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800">
             <p className="text-red-300">{err}</p>
-            <div className="mt-3 flex gap-2">
-              <Link href="/signup" className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-sm">Re-login</Link>
-              <button onClick={() => router.refresh()} className="px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm">Retry</button>
-              {token && <button onClick={logout} className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-sm">Logout</button>}
-            </div>
           </div>
         )}
-
-        {/* analyze card */}
-        {!busy && !err && <AnalyzeCard token={token} isPaid={!!me?.is_paid} />}
       </div>
     </main>
   );
 }
-
-/* ---------------- Analyze card ---------------- */
 
 /* ---------------- Analyze card (with 429 limit banner) ---------------- */
 

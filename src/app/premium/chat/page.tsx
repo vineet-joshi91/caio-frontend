@@ -81,12 +81,13 @@ export default function PremiumChatPage() {
     );
   }
 
-  return <ChatUI token={token} />;
+  // ⬇️ Pass isAdmin so only admins see the Admin Mode button in ChatUI
+  return <ChatUI token={token} isAdmin={me.tier === "admin"} />;
 }
 
 /* ---------------- Chat UI ---------------- */
 
-function ChatUI({ token }: { token: string }) {
+function ChatUI({ token, isAdmin }: { token: string; isAdmin: boolean }) {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [active, setActive] = useState<number | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -233,6 +234,17 @@ function ChatUI({ token }: { token: string }) {
               )}
             </div>
           </div>
+
+          {/* Only admins see this button */}
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className="block text-sm px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-center"
+            >
+              Admin Mode
+            </Link>
+          )}
+
           <Link
             href="/dashboard"
             className="block text-sm underline text-blue-300 hover:text-blue-200"
