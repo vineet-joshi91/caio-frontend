@@ -220,6 +220,16 @@ export default function DashboardPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {/* ADDED: Admin Mode button for admin tier only */}
+              {token && me?.tier === "admin" && (
+                <Link
+                  href="/admin"
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-sm shadow"
+                  title="View Admin-only analytics and user roster"
+                >
+                  Admin Mode
+                </Link>
+              )}
               {token ? (
                 <>
                   <span className={`px-2.5 py-1 rounded-full text-xs tracking-wide border ${planClass}`}>
