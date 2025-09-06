@@ -52,14 +52,8 @@ export default function PremiumChatPage() {
     })();
   }, []);
 
-  if (loading) {
-    return <main className="p-6">Loading…</main>;
-  }
-
-  if (!me) {
-    return <main className="p-6">Please log in.</main>;
-  }
-
+  if (loading) return <main className="p-6">Loading…</main>;
+  if (!me) return <main className="p-6">Please log in.</main>;
   if (!(me.tier === "admin" || me.tier === "premium")) {
     return (
       <main className="min-h-screen p-6 bg-zinc-950 text-zinc-100">
@@ -81,7 +75,6 @@ export default function PremiumChatPage() {
     );
   }
 
-  // ⬇️ Pass isAdmin so only admins see the Admin Mode button in ChatUI
   return <ChatUI token={token} isAdmin={me.tier === "admin"} />;
 }
 
@@ -139,14 +132,13 @@ function ChatUI({ token, isAdmin }: { token: string; isAdmin: boolean }) {
   }, []);
 
   useEffect(() => {
-    scroller.current?.scrollTo({ top: 999999, behavior: "smooth" });
+    scroller.current?.scrollTo({ top: 9e6, behavior: "smooth" });
   }, [msgs, busy]);
 
   async function send() {
     if (!input.trim() && !file) return;
     setBusy(true);
 
-    // optimistic user bubble
     const userText = input.trim() || "(file only)";
     setMsgs((m) => [...m, { role: "user", content: userText }]);
 
@@ -174,7 +166,6 @@ function ChatUI({ token, isAdmin }: { token: string; isAdmin: boolean }) {
         if (!active) setActive(j.session_id);
         setMsgs((m) => [...m, { role: "assistant", content: j.assistant }]);
         if (!sessions.find((s) => s.id === j.session_id)) {
-          // refresh session list if a new one was created
           loadSessions();
         }
       }
@@ -190,9 +181,9 @@ function ChatUI({ token, isAdmin }: { token: string; isAdmin: boolean }) {
 
   return (
     <main className="min-h-screen p-6 bg-zinc-950 text-zinc-100">
-      <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Sidebar */}
-        <aside className="md:col-span-1 space-y-3">
+      <div className="mx-auto max-w-7xl flex flex-col md:flex-row gap-6">
+        {/* Sidebar (smaller) */}
+        <aside className="w-full md:w-72 shrink-0 space-y-3">
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-sm font-semibold">Conversations</h2>
@@ -235,7 +226,6 @@ function ChatUI({ token, isAdmin }: { token: string; isAdmin: boolean }) {
             </div>
           </div>
 
-          {/* Only admins see this button */}
           {isAdmin && (
             <Link
               href="/admin"
@@ -253,17 +243,20 @@ function ChatUI({ token, isAdmin }: { token: string; isAdmin: boolean }) {
           </Link>
         </aside>
 
-        {/* Chat window */}
-        <section className="md:col-span-2">
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 h-[75vh] flex flex-col">
+        {/* Chat window (larger, readable) */}
+        <section className="flex-1">
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 h-[78vh] flex flex-col">
             {/* Transcript */}
-            <div ref={scroller} className="flex-1 overflow-auto p-4 space-y-3">
+            <div
+              ref={scroller}
+              className="flex-1 overflow-auto px-4 py-4 space-y-3"
+            >
               {msgs.map((m, i) => (
                 <div
                   key={i}
-                  className={`max-w-[85%] rounded-lg px-3 py-2 border ${
+                  className={`max-w-[75ch] rounded-xl px-3 py-2 border text-[15px] leading-7 ${
                     m.role === "user"
-                      ? "ml-auto bg-blue-600/20 border-blue-500/30"
+                      ? "ml-auto bg-blue-600/15 border-blue-500/30"
                       : "bg-zinc-800/70 border-zinc-700"
                   }`}
                 >
@@ -286,7 +279,7 @@ function ChatUI({ token, isAdmin }: { token: string; isAdmin: boolean }) {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   placeholder="Type your message…"
-                  className="flex-1 px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  className="flex-1 px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 text-[15px]"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
