@@ -18,17 +18,11 @@ type Me = {
 
 type RosterItem = {
   email: string;
-  tier: Tier;
-  is_admin: boolean;
-  is_paid: boolean;
-  managed: "env" | "db";
+  tier: Tier | string;
   created_at?: string | null;
   last_seen?: string | null;
-  count_24h?: number;
-  analyze_24h?: number;
-  chat_24h?: number;
-  count_7d?: number;
-  can_toggle_paid: boolean;
+  total_sessions?: number;
+  spend_usd?: number;
 };
 
 type RosterResp = {
@@ -36,6 +30,13 @@ type RosterResp = {
   page_size: number;
   total: number;
   items: RosterItem[];
+};
+
+type Summary = {
+  total_users: number;
+  demo: number;
+  pro: number;
+  premium: number;
 };
 
 /* ---------------- Utils ---------------- */
@@ -57,12 +58,22 @@ function fmtDate(s?: string | null) {
   }
 }
 
-function tierBadge(t: Tier) {
-  const label = t === "admin" || t === "premium" ? "Premium" : t === "pro" ? "Pro" : "Demo";
+function fmtUSD(v?: number) {
+  const n = Number.isFinite(v as number) ? (v as number) : 0;
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 4 }).format(n);
+  } catch {
+    return `$${n.toFixed(4)}`;
+  }
+}
+
+function tierBadge(t: Tier | string) {
+  const norm = String(t).toLowerCase() as Tier | string;
+  const label = norm === "admin" || norm === "premium" ? "Premium" : norm === "pro" ? "Pro" : "Demo";
   const bg =
-    t === "admin" || t === "premium"
+    norm === "admin" || norm === "premium"
       ? { bg: "#103a2c", br: "#1b5c47", fg: "#b9f2dd" }
-      : t === "pro"
+      : norm === "pro"
       ? { bg: "#0b2d46", br: "#134d77", fg: "#c7e7ff" }
       : { bg: "#3e2c0b", br: "#6a4a12", fg: "#ffe3b0" };
   return (
@@ -94,7 +105,9 @@ export default function AdminUsers() {
   const [pageSize, setPageSize] = useState(25);
   const [data, setData] = useState<RosterResp | null>(null);
   const [busy, setBusy] = useState(false);
-  const [actionMsg, setActionMsg] = useState<string | null>(null);
+
+  // KPIs
+  const [summary, setSummary] = useState<Summary | null>(null);
 
   const token = useMemo(getToken, []);
 
@@ -127,18 +140,36 @@ export default function AdminUsers() {
     })();
   }, [token]);
 
-  const isAdmin = (me?.tier === "admin");
+  const isAdmin = me?.tier === "admin";
+
+  async function loadSummary() {
+    if (!token) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/admin/users/summary`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (!r.ok) {
+        setSummary(null); // we'll fall back to roster-derived counts
+        return;
+      }
+      const j: Summary = await r.json();
+      setSummary(j);
+    } catch {
+      setSummary(null);
+    }
+  }
 
   async function loadRoster(p = page, ps = pageSize, query = q) {
     if (!token) return;
     setBusy(true);
-    setActionMsg(null);
     setErr(null);
     try {
       const u = new URL(`${API_BASE}/api/admin/users/roster`);
       u.searchParams.set("page", String(p));
       u.searchParams.set("page_size", String(ps));
       if (query.trim()) u.searchParams.set("q", query.trim());
+
       const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
       const body = await r.text();
       if (!r.ok) throw new Error(body || `HTTP ${r.status}`);
@@ -154,31 +185,12 @@ export default function AdminUsers() {
   }
 
   useEffect(() => {
-    if (isAdmin) loadRoster(1, pageSize, q);
+    if (!isAdmin) return;
+    (async () => {
+      await Promise.all([loadSummary(), loadRoster(1, pageSize, q)]);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
-
-  async function togglePaid(email: string, next: boolean) {
-    if (!confirm(`${next ? "Grant" : "Revoke"} Pro for ${email}?`)) return;
-    setBusy(true);
-    setActionMsg(null);
-    setErr(null);
-    try {
-      const r = await fetch(`${API_BASE}/api/admin/users/set-paid`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ email, is_paid: next }),
-      });
-      const body = await r.text();
-      if (!r.ok) throw new Error(body || `HTTP ${r.status}`);
-      setActionMsg(`Updated: ${email} → ${next ? "Pro" : "Demo"}`);
-      await loadRoster(page, pageSize, q);
-    } catch (e: any) {
-      setErr(String(e?.message || e) || "Could not update user.");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   function onSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -189,11 +201,22 @@ export default function AdminUsers() {
   const maxPage = Math.max(1, Math.ceil(total / (pageSize || 1)));
   const items = data?.items || [];
 
-  // derived mini-metrics from roster (replacing old /api/admin/metrics)
-  const m_total = total;
-  const m_premium = items.filter((u) => u.tier === "admin" || u.tier === "premium").length;
-  const m_pro = items.filter((u) => u.tier === "pro").length;
-  const m_active24h = items.filter((u) => (u.count_24h ?? 0) > 0).length;
+  // Fallback KPIs from current page if /summary isn’t available
+  const derived = useMemo(() => {
+    const counts = { demo: 0, pro: 0, premium: 0 };
+    for (const u of items) {
+      const t = String(u.tier || "").toLowerCase();
+      if (t === "admin" || t === "premium") counts.premium += 1;
+      else if (t === "pro") counts.pro += 1;
+      else counts.demo += 1;
+    }
+    return counts;
+  }, [items]);
+
+  const k_total = summary?.total_users ?? total;
+  const k_demo = summary?.demo ?? derived.demo;
+  const k_pro = summary?.pro ?? derived.pro;
+  const k_premium = summary?.premium ?? derived.premium;
 
   return (
     <main style={{ minHeight: "100vh", background: "#0b0f1a", color: "#e5e7eb", padding: 24 }}>
@@ -217,23 +240,18 @@ export default function AdminUsers() {
         )}
       </div>
 
-      {/* mini tiles */}
+      {/* KPI tiles */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, margin: "12px 0 16px" }}>
-        <Tile title="Total users" value={String(m_total)} />
-        <Tile title="Active in last 24h" value={String(m_active24h)} />
-        <Tile title="Premium (Admin+Premium)" value={String(m_premium)} />
-        <Tile title="Pro (DB managed)" value={String(m_pro)} />
+        <Tile title="Total users" value={String(k_total)} />
+        <Tile title="Demo" value={String(k_demo)} />
+        <Tile title="Pro" value={String(k_pro)} />
+        <Tile title="Premium (Admin+Premium)" value={String(k_premium)} />
       </div>
 
       {loading && <div style={{ margin: "10px 0" }}>Loading…</div>}
       {err && (
         <div style={{ margin: "10px 0", padding: 10, border: "1px solid #5a3535", background: "#331b1b" }}>
           {err}
-        </div>
-      )}
-      {actionMsg && (
-        <div style={{ margin: "10px 0", padding: 10, border: "1px solid #1b5c47", background: "#0f2c22", color: "#b9f2dd" }}>
-          {actionMsg}
         </div>
       )}
 
@@ -322,83 +340,35 @@ export default function AdminUsers() {
             <tr style={{ background: "#0e1320" }}>
               <th style={th}>Email</th>
               <th style={th}>Tier</th>
-              <th style={th}>Managed</th>
               <th style={th}>Created</th>
               <th style={th}>Last seen</th>
-              <th style={{ ...th, textAlign: "right" }}>24h (Analyze/Chat)</th>
-              <th style={{ ...th, textAlign: "right" }}>7d total</th>
-              <th style={{ ...th, textAlign: "right" }}>Actions</th>
+              <th style={{ ...th, textAlign: "right" }}>Total sessions</th>
+              <th style={{ ...th, textAlign: "right" }}>Tokens used (money)</th>
             </tr>
           </thead>
           <tbody>
-            {busy && items.length === 0 ? (
+            {busy && (items.length === 0) ? (
               <tr>
-                <td style={td} colSpan={8}>
-                  Loading…
-                </td>
+                <td style={td} colSpan={6}>Loading…</td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
-                <td style={td} colSpan={8}>
-                  No users found
-                </td>
+                <td style={td} colSpan={6}>No users found</td>
               </tr>
             ) : (
               items.map((u) => {
-                const nextPaid = !u.is_paid;
-                const canToggle = u.can_toggle_paid && u.managed === "db";
+                const sessions = Number.isFinite(u.total_sessions as number) ? (u.total_sessions as number) : 0;
+                const spend = Number.isFinite(u.spend_usd as number) ? (u.spend_usd as number) : 0;
                 return (
                   <tr key={u.email} style={{ borderTop: "1px solid #243044" }}>
                     <td style={td}>
                       <div style={{ fontWeight: 600 }}>{u.email}</div>
-                      <div style={{ opacity: 0.7, fontSize: 12 }}>{u.is_admin ? "Admin" : "User"} • {u.is_paid ? "Paid" : "Unpaid"}</div>
                     </td>
                     <td style={td}>{tierBadge(u.tier)}</td>
-                    <td style={td}>
-                      <span
-                        style={{
-                          padding: "2px 8px",
-                          borderRadius: 999,
-                          border: "1px solid #243044",
-                          background: "#0e1320",
-                          fontSize: 12,
-                        }}
-                      >
-                        {u.managed === "env" ? "Env" : "DB"}
-                      </span>
-                    </td>
                     <td style={td}>{fmtDate(u.created_at)}</td>
                     <td style={td}>{fmtDate(u.last_seen)}</td>
-                    <td style={{ ...td, textAlign: "right" }}>
-                      <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                        {(u.analyze_24h ?? 0)}/{(u.chat_24h ?? 0)}
-                      </span>
-                    </td>
-                    <td style={{ ...td, textAlign: "right" }}>
-                      <span style={{ fontVariantNumeric: "tabular-nums" }}>{u.count_7d ?? 0}</span>
-                    </td>
-                    <td style={{ ...td, textAlign: "right" }}>
-                      {u.managed === "env" ? (
-                        <span style={{ opacity: 0.6, fontSize: 12 }}>Managed by env</span>
-                      ) : (
-                        <button
-                          disabled={busy || !canToggle}
-                          onClick={() => togglePaid(u.email, nextPaid)}
-                          title={nextPaid ? "Grant Pro" : "Revoke Pro"}
-                          style={{
-                            padding: "8px 10px",
-                            borderRadius: 8,
-                            background: nextPaid ? "#0b3a5c" : "#5c3a0b",
-                            border: `1px solid ${nextPaid ? "#134d77" : "#6a4a12"}`,
-                            color: "#e5e7eb",
-                            opacity: busy || !canToggle ? 0.6 : 1,
-                            fontSize: 12,
-                          }}
-                        >
-                          {nextPaid ? "Make Pro" : "Revoke Pro"}
-                        </button>
-                      )}
-                    </td>
+                    <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{sessions}</td>
+                    <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtUSD(spend)}</td>
                   </tr>
                 );
               })
@@ -410,7 +380,7 @@ export default function AdminUsers() {
       {/* pagination */}
       <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ fontSize: 12, opacity: 0.7 }}>
-          Page <b>{page}</b> of <b>{maxPage}</b> • {total} users
+          Page <b>{page}</b> of <b>{maxPage}</b> • {total} user{total === 1 ? "" : "s"}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button
