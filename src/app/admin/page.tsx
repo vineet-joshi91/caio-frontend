@@ -6,7 +6,7 @@ const API_BASE =
   "https://caio-backend.onrender.com";
 
 /* ---------------- Types ---------------- */
-type Tier = "admin" | "premium" | "pro" | "demo";
+type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
 
 type Me = {
   email: string;
@@ -68,26 +68,24 @@ function fmtUSD(v?: number) {
 }
 
 function tierBadge(t: Tier | string) {
-  const norm = String(t).toLowerCase() as Tier | string;
-  const label = norm === "admin" || norm === "premium" ? "Premium" : norm === "pro" ? "Pro" : "Demo";
-  const bg =
+  const norm = String(t).toLowerCase();
+  const label =
+    norm === "admin" || norm === "premium" ? "Premium" :
+    norm === "pro_plus" ? "Pro+" :
+    norm === "pro" ? "Pro" : "Demo";
+  const style =
     norm === "admin" || norm === "premium"
       ? { bg: "#103a2c", br: "#1b5c47", fg: "#b9f2dd" }
+      : norm === "pro_plus"
+      ? { bg: "#12223d", br: "#2a4d8a", fg: "#d7e6ff" }
       : norm === "pro"
       ? { bg: "#0b2d46", br: "#134d77", fg: "#c7e7ff" }
       : { bg: "#3e2c0b", br: "#6a4a12", fg: "#ffe3b0" };
   return (
-    <span
-      style={{
-        padding: "2px 8px",
-        borderRadius: 999,
-        border: `1px solid ${bg.br}`,
-        background: bg.bg,
-        color: bg.fg,
-        fontSize: 12,
-        whiteSpace: "nowrap",
-      }}
-    >
+    <span style={{
+      padding:"2px 8px", borderRadius:999, border:`1px solid ${style.br}`,
+      background:style.bg, color:style.fg, fontSize:12, whiteSpace:"nowrap"
+    }}>
       {label}
     </span>
   );
@@ -203,19 +201,21 @@ export default function AdminUsers() {
 
   // Fallback KPIs from current page if /summary isn’t available
   const derived = useMemo(() => {
-    const counts = { demo: 0, pro: 0, premium: 0 };
-    for (const u of items) {
-      const t = String(u.tier || "").toLowerCase();
-      if (t === "admin" || t === "premium") counts.premium += 1;
-      else if (t === "pro") counts.pro += 1;
-      else counts.demo += 1;
-    }
-    return counts;
-  }, [items]);
+  const counts = { demo: 0, pro: 0, pro_plus: 0, premium: 0 };
+  for (const u of items) {
+    const t = String(u.tier || "").toLowerCase();
+    if (t === "admin" || t === "premium") counts.premium += 1;
+    else if (t === "pro_plus") counts.pro_plus += 1;
+    else if (t === "pro") counts.pro += 1;
+    else counts.demo += 1;
+  }
+  return counts;
+}, [items]);
 
-  const k_total = summary?.total_users ?? total;
-  const k_demo = summary?.demo ?? derived.demo;
-  const k_pro = summary?.pro ?? derived.pro;
+  const k_total   = summary?.total_users ?? total;
+  const k_demo    = summary?.demo ?? derived.demo;
+  const k_pro     = summary?.pro ?? derived.pro;
+  const k_proplus = (summary as any)?.pro_plus ?? derived.pro_plus;
   const k_premium = summary?.premium ?? derived.premium;
 
   return (
@@ -241,10 +241,11 @@ export default function AdminUsers() {
       </div>
 
       {/* KPI tiles */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, margin: "12px 0 16px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, margin: "12px 0 16px" }}>
         <Tile title="Total users" value={String(k_total)} />
         <Tile title="Demo" value={String(k_demo)} />
         <Tile title="Pro" value={String(k_pro)} />
+        <Tile title="Pro+" value={String(k_proplus)} />
         <Tile title="Premium (Admin+Premium)" value={String(k_premium)} />
       </div>
 
