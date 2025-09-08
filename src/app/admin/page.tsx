@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 
-/* ---------------- Config ---------------- */
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-backend.onrender.com";
@@ -40,25 +39,6 @@ type Summary = {
   premium: number;
 };
 
-type MetricsTotals = {
-  today: number;
-  all_time: number;
-  active_paid: number;
-  active_inr: number | null;
-  active_usd: number | null;
-  cancelled_7d: number;
-  free_cap_hits_today: number;
-};
-
-type MetricsSeries = { date: string; endpoint: string; tier: string; count: number };
-
-type MetricsResp = {
-  totals: MetricsTotals;
-  series: MetricsSeries[];
-  mrr: Record<string, number>;
-  notes?: string;
-};
-
 /* ---------------- Utils ---------------- */
 function getToken(): string | null {
   try {
@@ -81,23 +61,14 @@ function fmtDate(s?: string | null) {
 function fmtUSD(v?: number) {
   const n = Number.isFinite(v as number) ? (v as number) : 0;
   try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n);
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 4 }).format(n);
   } catch {
-    return `$${n.toFixed(2)}`;
-  }
-}
-
-function fmtINR(v?: number) {
-  const n = Number.isFinite(v as number) ? (v as number) : 0;
-  try {
-    return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
-  } catch {
-    return `₹${Math.round(n)}`;
+    return `$${n.toFixed(4)}`;
   }
 }
 
 function tierBadge(t: Tier | string) {
-  const norm = String(t).toLowerCase();
+  const norm = String(t).toLowerCase() as Tier | string;
   const label = norm === "admin" || norm === "premium" ? "Premium" : norm === "pro" ? "Pro" : "Demo";
   const bg =
     norm === "admin" || norm === "premium"
@@ -135,12 +106,8 @@ export default function AdminUsers() {
   const [data, setData] = useState<RosterResp | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // KPIs (users summary)
+  // KPIs
   const [summary, setSummary] = useState<Summary | null>(null);
-
-  // Admin metrics (Overview)
-  const [metrics, setMetrics] = useState<MetricsResp | null>(null);
-  const [mBusy, setMBusy] = useState(false);
 
   const token = useMemo(getToken, []);
 
@@ -183,7 +150,7 @@ export default function AdminUsers() {
         cache: "no-store",
       });
       if (!r.ok) {
-        setSummary(null);
+        setSummary(null); // we'll fall back to roster-derived counts
         return;
       }
       const j: Summary = await r.json();
@@ -217,38 +184,17 @@ export default function AdminUsers() {
     }
   }
 
-  async function loadMetrics() {
-    if (!token) return;
-    setMBusy(true);
-    try {
-      const r = await fetch(`${API_BASE}/api/admin/metrics`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      if (!r.ok) {
-        setMetrics(null);
-        return;
-      }
-      const j: MetricsResp = await r.json();
-      setMetrics(j);
-    } catch {
-      setMetrics(null);
-    } finally {
-      setMBusy(false);
-    }
-  }
-
   useEffect(() => {
     if (!isAdmin) return;
     (async () => {
-      await Promise.all([loadSummary(), loadRoster(1, pageSize, q), loadMetrics()]);
+      await Promise.all([loadSummary(), loadRoster(1, pageSize, q)]);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
-  function onSearch(e: React.FormEvent<HTMLFormElement>) {
+  function onSearch(e: React.FormEvent) {
     e.preventDefault();
-    void loadRoster(1, pageSize, q);
+    loadRoster(1, pageSize, q);
   }
 
   const total = data?.total ?? 0;
@@ -272,45 +218,6 @@ export default function AdminUsers() {
   const k_pro = summary?.pro ?? derived.pro;
   const k_premium = summary?.premium ?? derived.premium;
 
-  // ------- Metrics render helpers -------
-  const m = metrics?.totals;
-  const mrrINR = metrics?.mrr?.INR || 0;
-  const mrrUSD = metrics?.mrr?.USD || 0;
-  const mrrTotalText = `${fmtINR(mrrINR)} + ${fmtUSD(mrrUSD)}`;
-
-  // Build date -> endpoint -> count map for bars
-  const chartData = useMemo(() => {
-    if (!metrics?.series?.length) {
-      return {
-        dates: [] as string[],
-        byDate: {} as Record<string, Record<string, number>>,
-        endpoints: [] as string[],
-      };
-    }
-    const datesSet = new Set<string>();
-    const endpointsSet = new Set<string>();
-    const byDate: Record<string, Record<string, number>> = {};
-    for (const row of metrics.series) {
-      const d = row.date;
-      const ep = row.endpoint || "other";
-      datesSet.add(d);
-      endpointsSet.add(ep);
-      byDate[d] = byDate[d] || {};
-      byDate[d][ep] = (byDate[d][ep] || 0) + (row.count || 0);
-    }
-    const dates = Array.from(datesSet).sort();
-    const endpoints = Array.from(endpointsSet);
-    return { dates, byDate, endpoints };
-  }, [metrics]);
-
-  const maxPerDay = useMemo(() => {
-    if (!chartData.dates.length) return 0;
-    return chartData.dates.reduce((mx, d) => {
-      const dayTotal = Object.values(chartData.byDate[d] || {}).reduce((a, b) => a + b, 0);
-      return Math.max(mx, dayTotal);
-    }, 0);
-  }, [chartData]);
-
   return (
     <main style={{ minHeight: "100vh", background: "#0b0f1a", color: "#e5e7eb", padding: 24 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
@@ -333,92 +240,7 @@ export default function AdminUsers() {
         )}
       </div>
 
-      {/* NEW: Overview / metrics */}
-      {isAdmin && (
-        <>
-          <h2 style={{ margin: "18px 0 8px", fontSize: 16, opacity: 0.9 }}>Overview</h2>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12, marginBottom: 12 }}>
-            <Tile title="Active paid" value={String(m?.active_paid ?? 0)} />
-            <Tile title="Active (INR)" value={String(m?.active_inr ?? 0)} />
-            <Tile title="Active (USD)" value={String(m?.active_usd ?? 0)} />
-            <Tile title="Cancellations (7d)" value={String(m?.cancelled_7d ?? 0)} />
-            <Tile title="Free cap hits (today)" value={String(m?.free_cap_hits_today ?? 0)} />
-            <Tile title="MRR (INR + USD)" value={mrrTotalText} />
-          </div>
-
-          {/* Simple daily usage by endpoint (stacked bars) */}
-          <div style={{ border: "1px solid #243044", borderRadius: 10, padding: 12, background: "#0e1320" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <div style={{ fontWeight: 700 }}>Daily usage by endpoint</div>
-              {mBusy && <span style={{ fontSize: 12, opacity: 0.7 }}>Loading…</span>}
-            </div>
-            {!chartData.dates.length ? (
-              <div style={{ padding: "10px 0", opacity: 0.8, fontSize: 13 }}>No usage yet.</div>
-            ) : (
-              <>
-                <div style={{ display: "flex", gap: 12, marginTop: 10, overflowX: "auto" }}>
-                  {chartData.dates.map((d) => {
-                    const buckets = chartData.byDate[d] || {};
-                    const total = Object.values(buckets).reduce((a, b) => a + b, 0);
-                    return (
-                      <div key={d} style={{ minWidth: 36, textAlign: "center" }}>
-                        {/* stacked column */}
-                        <div
-                          style={{
-                            height: 140,
-                            width: 28,
-                            display: "flex",
-                            flexDirection: "column-reverse",
-                            border: "1px solid #243044",
-                            borderRadius: 6,
-                            overflow: "hidden",
-                            margin: "0 auto",
-                            background: "#0b0f1a",
-                          }}
-                          title={`${d} • ${total} total`}
-                        >
-                          {chartData.endpoints.map((ep) => {
-                            const val = buckets[ep] || 0;
-                            const h = maxPerDay ? Math.round((val / maxPerDay) * 138) : 0;
-                            const color = ep === "analyze" ? "#355be2" : ep === "chat" ? "#22c55e" : "#a855f7";
-                            return val > 0 ? (
-                              <div key={`${d}-${ep}`} style={{ height: h, background: color }} title={`${ep}: ${val}`} />
-                            ) : null;
-                          })}
-                        </div>
-                        <div style={{ marginTop: 6, fontSize: 11, opacity: 0.8 }}>{d.slice(5)}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-                {/* legend */}
-                <div style={{ display: "flex", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
-                  {chartData.endpoints.map((ep) => {
-                    const color = ep === "analyze" ? "#355be2" : ep === "chat" ? "#22c55e" : "#a855f7";
-                    return (
-                      <span key={`lg-${ep}`} style={{ fontSize: 12, opacity: 0.85 }}>
-                        <span
-                          style={{
-                            display: "inline-block",
-                            width: 10,
-                            height: 10,
-                            background: color,
-                            borderRadius: 2,
-                            marginRight: 6,
-                          }}
-                        />
-                        {ep}
-                      </span>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-        </>
-      )}
-
-      {/* KPI tiles for users breakdown (existing) */}
+      {/* KPI tiles */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, margin: "12px 0 16px" }}>
         <Tile title="Total users" value={String(k_total)} />
         <Tile title="Demo" value={String(k_demo)} />
@@ -460,14 +282,14 @@ export default function AdminUsers() {
               const ps = parseInt(e.target.value || "25", 10);
               setPageSize(ps);
               setPage(1);
-              void loadRoster(1, ps, q);
+              loadRoster(1, ps, q);
             }}
             style={{
               marginTop: 4,
               padding: "10px 12px",
               borderRadius: 10,
               background: "#0b0f1a",
-              border: "1px solid #243044", // (fixed string)
+              border: "1px solid #243044",
               color: "#e5e7eb",
             }}
           >
@@ -497,7 +319,7 @@ export default function AdminUsers() {
           onClick={() => {
             setQ("");
             setPage(1);
-            void loadRoster(1, pageSize, "");
+            loadRoster(1, pageSize, "");
           }}
           style={{
             padding: "10px 14px",
@@ -564,4 +386,66 @@ export default function AdminUsers() {
         <div style={{ fontSize: 12, opacity: 0.7 }}>
           Page <b>{page}</b> of <b>{maxPage}</b> • {total} user{total === 1 ? "" : "s"}
         </div>
-        <div style={{ display: "flex", gap: 8
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={() => {
+              if (page <= 1 || busy) return;
+              const p = page - 1;
+              setPage(p);
+              loadRoster(p, pageSize, q);
+            }}
+            disabled={busy || page <= 1}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 8,
+              background: "#111827",
+              border: "1px solid #243044",
+              color: "#e5e7eb",
+              opacity: busy || page <= 1 ? 0.6 : 1,
+            }}
+          >
+            Prev
+          </button>
+          <button
+            onClick={() => {
+              if (page >= maxPage || busy) return;
+              const p = page + 1;
+              setPage(p);
+              loadRoster(p, pageSize, q);
+            }}
+            disabled={busy || page >= maxPage}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 8,
+              background: "#111827",
+              border: "1px solid #243044",
+              color: "#e5e7eb",
+              opacity: busy || page >= maxPage ? 0.6 : 1,
+            }}
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+/* ---------------- Tiny tile ---------------- */
+function Tile({ title, value }: { title: string; value: string }) {
+  return (
+    <div style={{ border: "1px solid #243044", background: "#0e1320", borderRadius: 10, padding: 12 }}>
+      <div style={{ opacity: 0.7, fontSize: 12 }}>{title}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4 }}>{value}</div>
+    </div>
+  );
+}
+
+const th: React.CSSProperties = {
+  textAlign: "left",
+  padding: "10px 12px",
+  fontWeight: 700,
+  fontSize: 13,
+  borderBottom: "1px solid #243044",
+};
+const td: React.CSSProperties = { padding: "10px 12px", fontSize: 13 };
