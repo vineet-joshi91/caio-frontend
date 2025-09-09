@@ -98,7 +98,7 @@ export default function PremiumChatPage() {
 }
 
 /* =====================================================================================
-   CHAT UI — multi-file support for Premium/Admin; Pro+ limited to single file
+   CHAT UI — cosmetic polish + multi-file (Premium/Admin), single-file (Pro+)
 ===================================================================================== */
 
 function ChatUI({
@@ -232,7 +232,7 @@ function ChatUI({
     const fd = new FormData();
     fd.append("message", input.trim());
     if (active) fd.append("session_id", String(active));
-    files.forEach((f) => fd.append("files", f)); // <-- multiple
+    files.forEach((f) => fd.append("files", f)); // multiple (or single for Pro+)
 
     setInput("");
     setFiles([]);
@@ -347,39 +347,75 @@ function ChatUI({
 
         {/* Messages */}
         <div ref={scrollerRef} className="overflow-auto">
-          <div className="mx-auto max-w-3xl px-4 py-6 space-y-4">
+          <div className="mx-auto max-w-3xl px-4 py-6 space-y-5">
             {msgs.length === 0 && (
               <div className="rounded-xl border border-dashed border-zinc-800 p-8 text-center text-sm opacity-70">
                 Start a conversation — attach document(s) for context or just ask CAIO anything.
               </div>
             )}
-            {msgs.map((m, i) => (
-              <article key={i} className="px-2">
-                <div
-                  className={`${
-                    m.role === "user" ? "bg-blue-600/10 border-blue-500/30" : "bg-zinc-900/60 border-zinc-800"
-                  } border rounded-2xl`}
-                >
-                  <div className="px-4 py-3">
-                    <div
-                      className={`${m.role === "assistant" ? "prose prose-invert" : ""} max-w-none text-[16px] leading-7`}
-                    >
-                      {m.role === "assistant" ? (
+
+            {msgs.map((m, i) => {
+              const isUser = m.role === "user";
+              if (isUser) {
+                // Right-aligned bubble, ~75% width
+                return (
+                  <article key={i} className="flex">
+                    <div className="ml-auto max-w-[75%]">
+                      <div className="bg-blue-600/15 text-blue-100 border border-blue-500/30 rounded-2xl">
+                        <div className="px-4 py-3 whitespace-pre-wrap text-[16px] leading-7">
+                          {m.content}
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                );
+              }
+              // Assistant: full-width, no border, nicer rhythm
+              return (
+                <article key={i} className="flex">
+                  <div className="w-full">
+                    <div className="px-1">
+                      <div className="prose prose-invert max-w-none text-[16px] leading-7">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                      ) : (
-                        <div className="whitespace-pre-wrap">{m.content}</div>
-                      )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </div>
         </div>
 
-        {/* Composer (also acts as a local DnD highlight area) */}
+        {/* Composer */}
         <footer className="border-t border-zinc-800 bg-[rgb(14,19,32)]">
           <div className="mx-auto max-w-4xl px-4 py-3">
+            {/* Attached files list — now ABOVE the input */}
+            {!!files.length && (
+              <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                {files.map((f, idx) => (
+                  <span
+                    key={`${f.name}-${idx}`}
+                    className="inline-flex items-center gap-2 rounded-full bg-zinc-800 border border-zinc-700 px-2 py-1"
+                  >
+                    <span className="max-w-[220px] truncate">{f.name}</span>
+                    <button
+                      onClick={() => removeFile(idx)}
+                      className="rounded bg-zinc-700/60 hover:bg-zinc-600 px-1"
+                      aria-label="Remove file"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                {files.length >= maxFilesPerMessage && (
+                  <span className="text-[11px] opacity-70">
+                    Max {maxFilesPerMessage} file{maxFilesPerMessage > 1 ? "s" : ""} per message.
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Row with input + buttons; also accepts local DnD */}
             <div
               onDragOver={(e) => {
                 e.preventDefault();
@@ -418,7 +454,7 @@ function ChatUI({
               <input
                 ref={fileRef}
                 type="file"
-                multiple={isPremium}                 // Premium/Admin can select multiple
+                multiple={isPremium} // Premium/Admin can pick multiple
                 className="hidden"
                 onChange={(e) => addFiles(Array.from(e.target.files || []))}
               />
@@ -437,32 +473,6 @@ function ChatUI({
                 {sending ? "Sending…" : "Send"}
               </button>
             </div>
-
-            {/* Attached files list */}
-            {!!files.length && (
-              <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                {files.map((f, idx) => (
-                  <span
-                    key={`${f.name}-${idx}`}
-                    className="inline-flex items-center gap-2 rounded-full bg-zinc-800 border border-zinc-700 px-2 py-1"
-                  >
-                    <span className="max-w-[200px] truncate">{f.name}</span>
-                    <button
-                      onClick={() => removeFile(idx)}
-                      className="rounded bg-zinc-700/60 hover:bg-zinc-600 px-1"
-                      aria-label="Remove file"
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-                {files.length >= maxFilesPerMessage && (
-                  <span className="text-[11px] opacity-70">
-                    Max {maxFilesPerMessage} file{maxFilesPerMessage > 1 ? "s" : ""} per message.
-                  </span>
-                )}
-              </div>
-            )}
           </div>
         </footer>
 
