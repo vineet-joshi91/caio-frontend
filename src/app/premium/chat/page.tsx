@@ -87,22 +87,30 @@ export default function PremiumChatPage() {
     );
   }
 
-  return <ChatUI token={token} isAdmin={me.tier === "admin"} isProPlus={me.tier === "pro_plus"} />;
+  return (
+    <ChatUI
+      token={token}
+      isAdmin={me.tier === "admin"}
+      isProPlus={me.tier === "pro_plus"}
+      isPremium={me.tier === "premium" || me.tier === "admin"}
+    />
+  );
 }
 
 /* =====================================================================================
-   CHAT UI — fullscreen like ChatGPT (sidebar + conversation pane)
-   - Global dropzone: drop ANYWHERE to attach a file to the next message
+   CHAT UI — multi-file support for Premium/Admin; Pro+ limited to single file
 ===================================================================================== */
 
 function ChatUI({
   token,
   isAdmin,
   isProPlus,
+  isPremium,
 }: {
   token: string;
   isAdmin: boolean;
   isProPlus: boolean;
+  isPremium: boolean; // premium OR admin
 }) {
   const [navOpen, setNavOpen] = useState<boolean>(true);
   const [sessions, setSessions] = useState<SessionItem[]>([]);
@@ -110,9 +118,12 @@ function ChatUI({
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
 
-  // Drag & drop state (used for both global and composer highlights)
+  // Multiple files
+  const [files, setFiles] = useState<File[]>([]);
+  const maxFilesPerMessage = isPremium ? 8 : 1;
+
+  // Drag & drop state (global + composer)
   const [isDragging, setIsDragging] = useState(false);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -145,15 +156,14 @@ function ChatUI({
       if (e.dataTransfer && e.dataTransfer.files?.length) {
         e.preventDefault();
         setIsDragging(false);
-        const f = e.dataTransfer.files[0];
-        if (f) setFile(f);
+        const dropped = Array.from(e.dataTransfer.files);
+        addFiles(dropped);
       }
     }
     function onDragLeave(e: DragEvent) {
       e.preventDefault();
       setIsDragging(false);
     }
-
     window.addEventListener("dragover", onDragOver);
     window.addEventListener("drop", onDrop);
     window.addEventListener("dragleave", onDragLeave);
@@ -162,7 +172,18 @@ function ChatUI({
       window.removeEventListener("drop", onDrop);
       window.removeEventListener("dragleave", onDragLeave);
     };
-  }, []);
+  }, [files, isPremium]);
+
+  function addFiles(incoming: File[]) {
+    const merged = [...files, ...incoming];
+    const clipped = merged.slice(0, maxFilesPerMessage);
+    setFiles(clipped);
+  }
+  function removeFile(idx: number) {
+    const copy = files.slice();
+    copy.splice(idx, 1);
+    setFiles(copy);
+  }
 
   async function loadSessions() {
     try {
@@ -202,17 +223,19 @@ function ChatUI({
   }
 
   async function send() {
-    if (!input.trim() && !file) return;
+    if (!input.trim() && files.length === 0) return;
     setSending(true);
 
     const userText = input.trim() || "(file only)";
     setMsgs((m) => [...m, { role: "user", content: userText }]);
+
     const fd = new FormData();
     fd.append("message", input.trim());
     if (active) fd.append("session_id", String(active));
-    if (file) fd.append("file", file);
+    files.forEach((f) => fd.append("files", f)); // <-- multiple
+
     setInput("");
-    setFile(null);
+    setFiles([]);
 
     try {
       const r = await fetch(`${API_BASE}/api/chat/send`, {
@@ -225,6 +248,8 @@ function ChatUI({
         const msg =
           r.status === 429
             ? "You've hit your daily message limit. Upgrade to Premium for unlimited."
+            : r.status === 403
+            ? "Pro+ can attach one file per message. Upgrade to Premium for multiple attachments."
             : "Sorry, I couldn't send that. Please try again.";
         setMsgs((m) => [...m, { role: "assistant", content: msg + (txt ? `\n\n${txt}` : "") }]);
       } else {
@@ -293,7 +318,7 @@ function ChatUI({
           <div className="p-3 border-t border-zinc-800 space-y-2 text-sm">
             {isProPlus && (
               <div className="text-xs opacity-70">
-                Pro+ has daily message limits. Upgrade to Premium for unlimited chat.
+                Pro+ has daily message limits and one file per message. Upgrade to Premium for multiple attachments.
               </div>
             )}
             {isAdmin && (
@@ -325,7 +350,7 @@ function ChatUI({
           <div className="mx-auto max-w-3xl px-4 py-6 space-y-4">
             {msgs.length === 0 && (
               <div className="rounded-xl border border-dashed border-zinc-800 p-8 text-center text-sm opacity-70">
-                Start a conversation — attach a document for context or just ask CAIO anything.
+                Start a conversation — attach document(s) for context or just ask CAIO anything.
               </div>
             )}
             {msgs.map((m, i) => (
@@ -372,8 +397,8 @@ function ChatUI({
               onDrop={(e) => {
                 e.preventDefault();
                 setIsDragging(false);
-                const f = e.dataTransfer.files?.[0];
-                if (f) setFile(f);
+                const dropped = Array.from(e.dataTransfer.files || []);
+                addFiles(dropped);
               }}
               className={`flex items-center gap-2 ${isDragging ? "ring-2 ring-blue-500/40 rounded-lg p-2" : ""}`}
             >
@@ -393,32 +418,59 @@ function ChatUI({
               <input
                 ref={fileRef}
                 type="file"
+                multiple={isPremium}                 // Premium/Admin can select multiple
                 className="hidden"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                onChange={(e) => addFiles(Array.from(e.target.files || []))}
               />
               <button
                 onClick={() => fileRef.current?.click()}
                 className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
+                title={isPremium ? "Attach up to 8 files" : "Pro+ can attach 1 file"}
               >
-                {file ? "1 file" : "Attach"}
+                {files.length ? `${files.length} file${files.length > 1 ? "s" : ""}` : "Attach"}
               </button>
               <button
                 onClick={send}
-                disabled={sending || (!input.trim() && !file)}
+                disabled={sending || (!input.trim() && files.length === 0)}
                 className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60"
               >
                 {sending ? "Sending…" : "Send"}
               </button>
             </div>
-            {file && <div className="mt-2 text-xs opacity-80">Attached: {file.name}</div>}
+
+            {/* Attached files list */}
+            {!!files.length && (
+              <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                {files.map((f, idx) => (
+                  <span
+                    key={`${f.name}-${idx}`}
+                    className="inline-flex items-center gap-2 rounded-full bg-zinc-800 border border-zinc-700 px-2 py-1"
+                  >
+                    <span className="max-w-[200px] truncate">{f.name}</span>
+                    <button
+                      onClick={() => removeFile(idx)}
+                      className="rounded bg-zinc-700/60 hover:bg-zinc-600 px-1"
+                      aria-label="Remove file"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                {files.length >= maxFilesPerMessage && (
+                  <span className="text-[11px] opacity-70">
+                    Max {maxFilesPerMessage} file{maxFilesPerMessage > 1 ? "s" : ""} per message.
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </footer>
 
-        {/* Global drop overlay hint (optional visual cue) */}
+        {/* Global drop overlay hint */}
         {isDragging && (
           <div className="pointer-events-none fixed inset-0 flex items-center justify-center">
             <div className="rounded-2xl border-2 border-dashed border-blue-400/60 bg-zinc-900/70 px-6 py-4 text-sm">
-              Drop to attach your file
+              Drop file{isPremium ? "s" : ""} to attach {isPremium ? "(up to 8)" : "(1 for Pro+)"}
             </div>
           </div>
         )}
