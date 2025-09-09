@@ -11,7 +11,8 @@ const API_BASE =
   "https://caio-backend.onrender.com";
 const NETLIFY_HOME = "https://caioai.netlify.app";
 
-type Tier = "admin" | "premium" | "pro" | "demo";
+// ✅ include pro_plus on the dashboard
+type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
 type Me = { email: string; is_admin: boolean; is_paid: boolean; created_at?: string; tier?: Tier };
 type Result =
   | { status: "demo"; title: string; summary: string; tip?: string }
@@ -168,9 +169,9 @@ export default function DashboardPage() {
     })();
   }, []);
 
-  /* NEW: Auto-redirect Admin/Premium to Chat Mode */
+  /* ✅ Auto-redirect Admin / Premium / Pro+ to Chat Mode */
   useEffect(() => {
-    if (!busy && token && (me?.tier === "admin" || me?.tier === "premium")) {
+    if (!busy && token && (me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus")) {
       router.replace("/premium/chat");
     }
   }, [busy, token, me?.tier, router]);
@@ -181,11 +182,15 @@ export default function DashboardPage() {
     window.location.assign(NETLIFY_HOME);
   }
 
-  const planFromTier = (t?: string) => (t === "admin" || t === "premium" ? "Premium" : t === "pro" ? "Pro" : "Demo");
+  const planFromTier = (t?: string) =>
+    t === "admin" || t === "premium" ? "Premium" : t === "pro_plus" ? "Pro+" : t === "pro" ? "Pro" : "Demo";
+
   const plan = planFromTier(me?.tier);
   const planClass =
     plan === "Premium"
       ? "bg-emerald-500/15 border-emerald-400/40 text-emerald-200"
+      : plan === "Pro+"
+      ? "bg-fuchsia-500/15 border-fuchsia-400/40 text-fuchsia-200"
       : plan === "Pro"
       ? "bg-sky-500/15 border-sky-400/40 text-sky-200"
       : "bg-amber-500/15 border-amber-400/40 text-amber-200";
@@ -217,22 +222,33 @@ export default function DashboardPage() {
               )}
             </div>
           </div>
-          {/* hide upgrade for Admin/Premium */}
-          {token && !(me?.tier === "admin" || me?.tier === "premium") && !me?.is_paid && (
-            <div className="mt-3">
-              <Link href="/payments" className="inline-block text-blue-300 underline hover:text-blue-200">
-                Upgrade to Pro
+
+          {/* CTA row for Demo & Pro: Upgrade + Try Chat */}
+          {token && (me?.tier === "demo" || me?.tier === "pro") && (
+            <div className="mt-3 flex items-center gap-3">
+              {me?.tier === "demo" && !me?.is_paid && (
+                <Link href="/payments" className="inline-block text-blue-300 underline hover:text-blue-200">
+                  Upgrade to Pro
+                </Link>
+              )}
+              <Link
+                href="/premium/chat"
+                className="inline-flex items-center rounded-md bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-sm"
+                title="Preview the premium chat experience"
+              >
+                Try Chat
               </Link>
             </div>
           )}
+
           {/* If redirecting, show a tiny hint (no flicker) */}
-          {token && (me?.tier === "admin" || me?.tier === "premium") && (
+          {token && (me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus") && (
             <div className="mt-2 text-xs opacity-70">Redirecting to Premium Chat…</div>
           )}
         </header>
 
-        {/* normal dashboard continues unchanged (Demo/Pro will see it) */}
-        {!busy && !err && !(me?.tier === "admin" || me?.tier === "premium") && (
+        {/* normal dashboard continues for Demo/Pro only */}
+        {!busy && !err && !(me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus") && (
           <AnalyzeCard token={token} isPaid={!!me?.is_paid} />
         )}
 
@@ -321,7 +337,7 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
       let parsed: any = {};
       try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
 
-      // NEW: explicit 429 handling with banner
+      // explicit 429 handling with banner
       if (res.status === 429) {
         setLimit({
           plan: parsed?.plan, used: parsed?.used, limit: parsed?.limit,
@@ -359,7 +375,7 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
     <section className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800 space-y-5">
       <h2 className="text-xl font-semibold">Quick analyze</h2>
 
-      {/* NEW: daily limit banner */}
+      {/* daily limit banner */}
       {limit && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">
           <div className="flex items-start justify-between gap-3">
@@ -377,7 +393,6 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
               Dismiss
             </button>
           </div>
-          {/* Gentle nudge for Demo only */}
           {limit.plan === "demo" && (
             <div className="mt-2">
               <a href="/payments" className="inline-block text-xs px-2.5 py-1 rounded-md bg-amber-400/20 border border-amber-400/40 hover:bg-amber-400/30">
