@@ -23,6 +23,8 @@ type Msg = {
   role: "user" | "assistant";
   content: string;
   created_at?: string;
+  /** local-only attachment names for user messages sent from this client */
+  attachments?: string[];
 };
 
 function readTokenSafe(): string {
@@ -98,7 +100,7 @@ export default function PremiumChatPage() {
 }
 
 /* =====================================================================================
-   CHAT UI — cosmetic polish + multi-file (Premium/Admin), single-file (Pro+)
+   CHAT UI — cosmetic polish + attachments shown on message + multi-file (Premium/Admin)
 ===================================================================================== */
 
 function ChatUI({
@@ -119,7 +121,7 @@ function ChatUI({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
 
-  // Multiple files
+  // Multiple files (for composer)
   const [files, setFiles] = useState<File[]>([]);
   const maxFilesPerMessage = isPremium ? 8 : 1;
 
@@ -226,8 +228,12 @@ function ChatUI({
     if (!input.trim() && files.length === 0) return;
     setSending(true);
 
+    // Snapshot names for display on the user bubble
+    const attachedNames = files.map((f) => f.name);
     const userText = input.trim() || "(file only)";
-    setMsgs((m) => [...m, { role: "user", content: userText }]);
+
+    // render immediately with attachments row (local-only)
+    setMsgs((m) => [...m, { role: "user", content: userText, attachments: attachedNames }]);
 
     const fd = new FormData();
     fd.append("message", input.trim());
@@ -357,10 +363,24 @@ function ChatUI({
             {msgs.map((m, i) => {
               const isUser = m.role === "user";
               if (isUser) {
-                // Right-aligned bubble, ~75% width
+                // Right-aligned bubble, ~75% width, with attachment chips above message
                 return (
                   <article key={i} className="flex">
                     <div className="ml-auto max-w-[75%]">
+                      {/* attachments row */}
+                      {!!m.attachments?.length && (
+                        <div className="mb-2 flex flex-wrap gap-2 justify-end">
+                          {m.attachments.map((name, idx) => (
+                            <span
+                              key={`${name}-${idx}`}
+                              className="inline-flex items-center gap-2 rounded-full bg-blue-900/40 border border-blue-700/50 px-2 py-1 text-xs"
+                            >
+                              <span className="max-w-[220px] truncate">{name}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {/* message bubble */}
                       <div className="bg-blue-600/15 text-blue-100 border border-blue-500/30 rounded-2xl">
                         <div className="px-4 py-3 whitespace-pre-wrap text-[16px] leading-7">
                           {m.content}
