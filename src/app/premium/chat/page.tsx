@@ -9,7 +9,7 @@ const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-backend.onrender.com";
 
-type Tier = "admin" | "premium" | "pro" | "demo";
+type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
 type Me = { email: string; tier: Tier };
 
 type SessionItem = {
@@ -68,7 +68,7 @@ export default function PremiumChatPage() {
   if (!me) return <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">Please log in.</main>;
 
   // Gate: only Admin + Premium
-  if (!(me.tier === "admin" || me.tier === "premium")) {
+  if (!(me.tier === "admin" || me.tier === "premium" || me.tier === "pro_plus")) {
     return (
       <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
         <div className="max-w-2xl mx-auto space-y-4">
@@ -82,9 +82,6 @@ export default function PremiumChatPage() {
               .
             </p>
           </div>
-          <Link href="/dashboard" className="underline text-blue-300 hover:text-blue-200 text-sm">
-            ← Back to Dashboard
-          </Link>
         </div>
       </main>
     );
@@ -105,6 +102,7 @@ function ChatUI({ token, isAdmin }: { token: string; isAdmin: boolean }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -138,6 +136,22 @@ function ChatUI({ token, isAdmin }: { token: string; isAdmin: boolean }) {
       }
     } catch {}
   }
+  
+  useEffect(() => {
+  const prevent = (e: DragEvent) => {
+    // Only block if dragging files; allows text selections to behave normally
+    if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files")) {
+      e.preventDefault();
+    }
+  };
+  window.addEventListener("dragover", prevent);
+  window.addEventListener("drop", prevent);
+  return () => {
+    window.removeEventListener("dragover", prevent);
+    window.removeEventListener("drop", prevent);
+  };
+}, []);
+
 
   async function loadHistory(sessionId: number) {
     try {
@@ -258,9 +272,6 @@ function ChatUI({ token, isAdmin }: { token: string; isAdmin: boolean }) {
                 Admin Mode
               </Link>
             )}
-            <Link href="/dashboard" className="block text-center underline text-blue-300 hover:text-blue-200">
-              ← Back to Dashboard
-            </Link>
           </div>
         </div>
       </aside>
@@ -319,40 +330,63 @@ function ChatUI({ token, isAdmin }: { token: string; isAdmin: boolean }) {
         {/* Composer */}
         <footer className="border-t border-zinc-800 bg-[rgb(14,19,32)]">
           <div className="mx-auto max-w-4xl px-4 py-3">
-            <div className="flex items-center gap-2">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                rows={1}
-                placeholder="Type your message…"
-                className="flex-1 resize-none px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 text-[16px] leading-6"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
+            <div
+                onDragOver={(e) => {
                     e.preventDefault();
-                    send();
-                  }
+                    e.dataTransfer.dropEffect = "copy";
+                    setIsDragging(true);
                 }}
-              />
-              <input
-                ref={fileRef}
-                type="file"
-                className="hidden"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              />
-              <button
-                onClick={() => fileRef.current?.click()}
-                className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
-              >
-                {file ? "1 file" : "Attach"}
-              </button>
-              <button
-                onClick={send}
-                disabled={sending || (!input.trim() && !file)}
-                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60"
-              >
-                {sending ? "Sending…" : "Send"}
-              </button>
-            </div>
+                onDragEnter={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                }}
+                onDragLeave={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                }}
+                onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    const f = e.dataTransfer.files?.[0];
+                    if (f) setFile(f); // optional: validate extension before setFile
+                }}
+                className={`flex items-center gap-2 ${
+                    isDragging ? "ring-2 ring-blue-500/40 rounded-lg p-2" : ""
+                }`}
+                >
+                <textarea
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    rows={1}
+                    placeholder="Type your message…"
+                    className="flex-1 resize-none px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 text-[16px] leading-6"
+                    onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        send();
+                    }
+                    }}
+                />
+                <input
+                    ref={fileRef}
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                />
+                <button
+                    onClick={() => fileRef.current?.click()}
+                    className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
+                >
+                    {file ? "1 file" : "Attach"}
+                </button>
+                <button
+                    onClick={send}
+                    disabled={sending || (!input.trim() && !file)}
+                    className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60"
+                >
+                    {sending ? "Sending…" : "Send"}
+                </button>
+                </div>
             {file && <div className="mt-2 text-xs opacity-80">Attached: {file.name}</div>}
           </div>
         </footer>
