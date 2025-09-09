@@ -23,8 +23,7 @@ type Msg = {
   role: "user" | "assistant";
   content: string;
   created_at?: string;
-  /** local-only attachment names for user messages sent from this client */
-  attachments?: string[];
+  attachments?: string[]; // local-only attachment names for user messages
 };
 
 function readTokenSafe(): string {
@@ -36,6 +35,17 @@ function readTokenSafe(): string {
   } catch {
     return "";
   }
+}
+
+function logoutClient() {
+  try {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("token");
+    // expire cookie named "token"
+    document.cookie = "token=; Max-Age=0; path=/; SameSite=Lax";
+  } catch {}
+  // hard redirect so all client state resets
+  window.location.href = "/login";
 }
 
 export default function PremiumChatPage() {
@@ -69,7 +79,6 @@ export default function PremiumChatPage() {
   if (loading) return <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">Loading…</main>;
   if (!me) return <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">Please log in.</main>;
 
-  // Gate: Admin + Premium + Pro+
   if (!(me.tier === "admin" || me.tier === "premium" || me.tier === "pro_plus")) {
     return (
       <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
@@ -92,6 +101,7 @@ export default function PremiumChatPage() {
   return (
     <ChatUI
       token={token}
+      me={me}
       isAdmin={me.tier === "admin"}
       isProPlus={me.tier === "pro_plus"}
       isPremium={me.tier === "premium" || me.tier === "admin"}
@@ -100,16 +110,18 @@ export default function PremiumChatPage() {
 }
 
 /* =====================================================================================
-   CHAT UI — cosmetic polish + attachments shown on message + multi-file (Premium/Admin)
+   CHAT UI — logout button + multi-file (Premium/Admin), single-file (Pro+), global DnD
 ===================================================================================== */
 
 function ChatUI({
   token,
+  me,
   isAdmin,
   isProPlus,
   isPremium,
 }: {
   token: string;
+  me: Me;
   isAdmin: boolean;
   isProPlus: boolean;
   isPremium: boolean; // premium OR admin
@@ -348,6 +360,23 @@ function ChatUI({
               {navOpen ? "Hide" : "Show"} sidebar
             </button>
             <h1 className="text-base md:text-lg font-semibold truncate">{title}</h1>
+
+            {/* spacer */}
+            <div className="flex-1" />
+
+            {/* tier badge + logout */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs px-2 py-1 rounded bg-zinc-800 border border-zinc-700">
+                {me.tier.toUpperCase()}
+              </span>
+              <button
+                onClick={logoutClient}
+                className="px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-sm"
+                title="Log out"
+              >
+                Log out
+              </button>
+            </div>
           </div>
         </header>
 
@@ -367,7 +396,6 @@ function ChatUI({
                 return (
                   <article key={i} className="flex">
                     <div className="ml-auto max-w-[75%]">
-                      {/* attachments row */}
                       {!!m.attachments?.length && (
                         <div className="mb-2 flex flex-wrap gap-2 justify-end">
                           {m.attachments.map((name, idx) => (
@@ -380,7 +408,6 @@ function ChatUI({
                           ))}
                         </div>
                       )}
-                      {/* message bubble */}
                       <div className="bg-blue-600/15 text-blue-100 border border-blue-500/30 rounded-2xl">
                         <div className="px-4 py-3 whitespace-pre-wrap text-[16px] leading-7">
                           {m.content}
@@ -390,7 +417,7 @@ function ChatUI({
                   </article>
                 );
               }
-              // Assistant: full-width, no border, nicer rhythm
+              // Assistant: full-width, no border, nice rhythm
               return (
                 <article key={i} className="flex">
                   <div className="w-full">
@@ -409,7 +436,6 @@ function ChatUI({
         {/* Composer */}
         <footer className="border-t border-zinc-800 bg-[rgb(14,19,32)]">
           <div className="mx-auto max-w-4xl px-4 py-3">
-            {/* Attached files list — now ABOVE the input */}
             {!!files.length && (
               <div className="mb-3 flex flex-wrap gap-2 text-xs">
                 {files.map((f, idx) => (
@@ -435,7 +461,6 @@ function ChatUI({
               </div>
             )}
 
-            {/* Row with input + buttons; also accepts local DnD */}
             <div
               onDragOver={(e) => {
                 e.preventDefault();
