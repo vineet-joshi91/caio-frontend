@@ -232,12 +232,13 @@ export default function DashboardPage() {
                 </Link>
               )}
               <Link
-                href="/premium/chat"
+                href="/premium/chat?trial=1"
                 className="inline-flex items-center rounded-md bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-sm"
                 title="Preview the premium chat experience"
               >
                 Try Chat
               </Link>
+
             </div>
           )}
 
