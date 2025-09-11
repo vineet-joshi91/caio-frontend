@@ -7,8 +7,8 @@ const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-backend.onrender.com";
 
-const TIMEOUT_MS = 60000;       // allow long cold starts
-const WARMUP_MAX_MS = 60000;    // up to ~60s warming
+const TIMEOUT_MS = 60000;
+const WARMUP_MAX_MS = 60000;
 
 export default function LoginPage() {
   const r = useRouter();
@@ -22,7 +22,18 @@ export default function LoginPage() {
 
   function saveToken(token: string) {
     document.cookie = `token=${encodeURIComponent(token)}; Path=/; Max-Age=2592000; SameSite=Lax`;
-    localStorage.setItem("token", token);
+    try {
+      localStorage.setItem("token", token);
+      localStorage.setItem("access_token", token);
+    } catch {}
+  }
+
+  function clearAuth() {
+    try {
+      localStorage.removeItem("token");
+      localStorage.removeItem("access_token");
+    } catch {}
+    document.cookie = "token=; Path=/; Max-Age=0; SameSite=Lax";
   }
 
   async function fetchWithTimeout(url: string, init?: RequestInit, ms = TIMEOUT_MS) {
@@ -36,11 +47,9 @@ export default function LoginPage() {
   }
 
   async function warmBackend() {
-    // Step 1: app up?
     setWarmMsg("Warming app…");
     try { await fetchWithTimeout(`${API_BASE}/api/health`, { cache: "no-store" }, 8000); } catch {}
 
-    // Step 2: DB ready? (loop with backoff)
     setWarmMsg("Warming database…");
     let delay = 800;
     let waited = 0;
@@ -49,7 +58,7 @@ export default function LoginPage() {
         const r = await fetchWithTimeout(`${API_BASE}/api/ready`, { cache: "no-store" }, 8000);
         if (r.ok) {
           const j = await r.json().catch(() => ({}));
-          if (j?.ok) { setWarmMsg("Server is ready"); return; }
+          if (j?.ok || j?.ready) { setWarmMsg("Server is ready"); return; }
         }
       } catch {}
       await new Promise(res => setTimeout(res, delay));
@@ -88,11 +97,9 @@ export default function LoginPage() {
     setDebug(null);
     setBusy(true);
     try {
-      // Try up to 3 attempts with gentle backoff (helps cold DB)
       let resp = await postLogin();
       for (let i = 0; i < 2 && (!resp.ok && resp.status === "timeout"); i++) {
         await new Promise(res => setTimeout(res, 1500 * (i + 1)));
-        // nudge /ready again between attempts
         try { await fetchWithTimeout(`${API_BASE}/api/ready`, { cache: "no-store" }, 8000); } catch {}
         resp = await postLogin();
       }
@@ -112,6 +119,12 @@ export default function LoginPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function goToSignup() {
+    // CRITICAL: ensure signup flow starts anonymous
+    clearAuth();
+    window.location.href = "/signup";
   }
 
   return (
@@ -165,7 +178,10 @@ export default function LoginPage() {
         </button>
 
         <div style={{ marginTop: 10, fontSize: 13 }}>
-          New here? <a href="/signup" style={{ color: "#93c5fd" }}>Create an account</a>
+          New here?{" "}
+          <button type="button" onClick={goToSignup} style={{ color: "#93c5fd", background: "none", border: 0, padding: 0, cursor: "pointer" }}>
+            Create an account
+          </button>
         </div>
       </form>
     </main>

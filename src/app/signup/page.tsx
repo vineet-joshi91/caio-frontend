@@ -1,9 +1,11 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
-const API = process.env.NEXT_PUBLIC_API_BASE ?? '';
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
+  "https://caio-backend.onrender.com";
 
 type FastAPIError =
   | { detail?: string }
@@ -11,34 +13,52 @@ type FastAPIError =
 
 export default function SignupPage() {
   const router = useRouter();
-  const [name, setName] = useState('');
-  const [org, setOrg] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [name, setName] = useState("");
+  const [org, setOrg] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  function clearAuth() {
+    try {
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("token");
+    } catch {}
+    document.cookie = "token=; Path=/; Max-Age=0; SameSite=Lax";
+  }
+  function saveToken(token: string) {
+    document.cookie = `token=${encodeURIComponent(token)}; Path=/; Max-Age=2592000; SameSite=Lax`;
+    try {
+      localStorage.setItem("access_token", token);
+      localStorage.setItem("token", token);
+    } catch {}
+  }
+
+  // CRITICAL: ensure signup always starts unauthenticated
+  useEffect(() => { clearAuth(); }, []);
+
   function extractError(e: any): string {
     try {
-      if (!e) return 'Something went wrong';
-      if (typeof e === 'string') return e;
+      if (!e) return "Something went wrong";
+      if (typeof e === "string") return e;
       if (e.detail) {
-        if (typeof e.detail === 'string') return e.detail;
+        if (typeof e.detail === "string") return e.detail;
         if (Array.isArray(e.detail)) {
           return (
             e.detail
               .map((d: any) => {
-                const where = Array.isArray(d?.loc) ? d.loc.join('.') : '';
+                const where = Array.isArray(d?.loc) ? d.loc.join(".") : "";
                 return d?.msg ? `${where}: ${d.msg}` : where;
               })
               .filter(Boolean)
-              .join('; ') || 'Validation error'
+              .join("; ") || "Validation error"
           );
         }
       }
-      return 'Unexpected error';
+      return "Unexpected error";
     } catch {
-      return 'Unexpected error';
+      return "Unexpected error";
     }
   }
 
@@ -48,16 +68,16 @@ export default function SignupPage() {
     setLoading(true);
 
     try {
-      // Backend expects { username, password, ... }
-      const res = await fetch(`${API}/api/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      // Keep the same endpoint/shape your app uses today.
+      const res = await fetch(`${API_BASE}/api/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          username: email.trim(),   // <-- map email to username
-          password: password,       // <-- backend requires this field
-          name: name.trim(),        // optional; backend may ignore/save
-          org: org.trim(),          // optional
-          source: 'signup',
+          username: email.trim(),   // backend expects "username"
+          password: password,
+          name: name.trim(),
+          org: org.trim(),
+          source: "signup",
         }),
       });
 
@@ -71,14 +91,13 @@ export default function SignupPage() {
       }
 
       const data = await res.json();
-      const token = data.access_token || data.token || '';
-      if (!token) throw new Error('No token returned from server');
+      const token = data.access_token || data.token || "";
+      if (!token) throw new Error("No token returned from server");
 
-      localStorage.setItem('access_token', token);
-      localStorage.setItem('token', token); // keep legacy key if other pages read it
-      router.push('/dashboard');
+      saveToken(token);
+      router.push("/dashboard");
     } catch (e: any) {
-      setErr(e.message || 'Something went wrong');
+      setErr(e.message || "Something went wrong");
     } finally {
       setLoading(false);
     }
@@ -150,11 +169,11 @@ export default function SignupPage() {
           disabled={loading}
           className="w-full rounded-lg py-2 font-medium bg-gradient-to-r from-sky-500 to-emerald-500 text-white disabled:opacity-60"
         >
-          {loading ? 'Creating...' : 'Sign up'}
+          {loading ? "Creating..." : "Sign up"}
         </button>
 
         <p className="text-xs text-zinc-500">
-          Already have an account?{' '}
+          Already have an account?{" "}
           <a className="underline" href="/login">Log in</a>
         </p>
       </form>
