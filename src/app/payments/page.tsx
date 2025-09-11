@@ -104,7 +104,8 @@ function normalizePricing(cfg?: PublicConfig): PriceTable {
 
 export default function PaymentsPage() {
   const token = useMemo(getToken, []);
-  const [loading, setLoading] = useState(true);
+  const [loadingConfig, setLoadingConfig] = useState(true);
+  const [checkoutPlan, setCheckoutPlan] = useState<null | "pro" | "pro_plus" | "premium">(null);
   const [err, setErr] = useState<string | null>(null);
   const [currency, setCurrency] = useState<Currency>("USD");
   const [prices, setPrices] = useState<PriceTable>({
@@ -135,13 +136,14 @@ export default function PaymentsPage() {
       } catch (e: any) {
         console.error("/api/public-config failed:", e?.message || e);
       } finally {
-        setLoading(false);
+        setLoadingConfig(false);
       }
     })();
   }, []);
 
   async function startCheckout(plan: "pro" | "pro_plus" | "premium") {
     setErr(null);
+    setCheckoutPlan(plan);
     try {
       const res = await fetch(`${API_BASE}/api/payments/subscription/create`, {
         method: "POST",
@@ -172,6 +174,8 @@ export default function PaymentsPage() {
       window.location.href = (j.short_url || j.url) as string;
     } catch (e: any) {
       setErr(e?.message || "Could not start checkout.");
+    } finally {
+      setCheckoutPlan(null);
     }
   }
 
@@ -216,6 +220,7 @@ export default function PaymentsPage() {
           cta="Start subscription"
           onClick={() => startCheckout("pro")}
           button="bg-blue-600 hover:bg-blue-500"
+          loading={checkoutPlan === "pro"}
         />
 
         <PlanCard
@@ -225,6 +230,7 @@ export default function PaymentsPage() {
           cta="Start Pro+"
           onClick={() => startCheckout("pro_plus")}
           button="bg-fuchsia-600 hover:bg-fuchsia-500"
+          loading={checkoutPlan === "pro_plus"}
         />
 
         <PlanCard
@@ -235,6 +241,7 @@ export default function PaymentsPage() {
           onClick={() => startCheckout("premium")}
           button="bg-emerald-600 hover:bg-emerald-500"
           highlight
+          loading={checkoutPlan === "premium"}
         />
       </div>
 
@@ -261,8 +268,9 @@ function PlanCard(props: {
   onClick: () => void;
   button: string;
   highlight?: boolean;
+  loading?: boolean;
 }) {
-  const { title, price, features, cta, onClick, button, highlight } = props;
+  const { title, price, features, cta, onClick, button, highlight, loading } = props;
   return (
     <div
       className={`rounded-2xl border p-6 shadow-sm transition-colors ${
