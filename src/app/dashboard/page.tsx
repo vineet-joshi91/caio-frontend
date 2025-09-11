@@ -3,14 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-
-/* ------------------------------ Config ------------------------------ */
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-backend.onrender.com";
 const NETLIFY_HOME = "https://caioai.netlify.app";
 
+// ✅ include pro_plus on the dashboard
 type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
 type Me = { email: string; is_admin: boolean; is_paid: boolean; created_at?: string; tier?: Tier };
 type Result =
@@ -18,8 +19,7 @@ type Result =
   | { status: "error"; title: string; message: string; action?: string }
   | { status: "ok"; title?: string; summary?: string; [k: string]: any };
 
-/* ------------------------------ Utils ------------------------------ */
-
+/* ---------------- Utils ---------------- */
 function withTimeout<T>(p: Promise<T>, ms = 120000): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
@@ -40,81 +40,105 @@ function readTokenSafe(): string {
   }
 }
 
-/* ------------------------------ Markdown parsing ------------------------------ */
-
-/** Strip stray code fences and normalise spacing/newlines */
-function clean(md: string): string {
-  return (md || "")
-    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```[a-zA-Z]*\s*/g, "").replace(/```/g, ""))
-    .replace(/\r\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+/* ---------- Markdown helpers (spacing + parsing) ---------- */
+// 🔧 accept both `##` and `###` level headings from backend
+function normalizeAnalysis(md: string) {
+  let s = (md ?? "").trim();
+  s = s.replace(/\n(?=#{2,3}\s+)/g, "\n\n");
+  s = s.replace(/(#{2,3}\s+(Insights|Recommendations|Risks|Actions|Summary))/gi, "\n\n$1");
+  s = s.replace(/(#{2,3}\s+[A-Z]{2,}.*?)(\s+#{2,3}\s+)/g, "$1\n\n$2");
+  s = s.replace(/(\d\.\s[^\n])(?=\s*\d\.\s)/g, "$1\n");
+  s = s.replace(/\n{3,}/g, "\n\n");
+  return s;
 }
-
-/** Split into per-CXO sections */
-function splitByCXO(md: string): Record<"CFO"|"COO"|"CHRO"|"CMO"|"CPO", string> {
-  const text = clean(md);
-  const parts = text
-    .split(/\n(?=#{2,3}\s+(CFO|COO|CHRO|CMO|CPO)\b)/i)
+type BrainParse = { name: string; insights?: string; recommendations?: string; };
+function parseBrains(md: string): BrainParse[] {
+  // 🔧 split at either `## <ROLE>` or `### <ROLE>`
+  const sections = md
+    .split(/\n(?=#{2,3}\s+[A-Z]{2,}.*$)/gm)
     .map((s) => s.trim())
     .filter(Boolean);
-
-  const map = { CFO: "", COO: "", CHRO: "", CMO: "", CPO: "" } as Record<
-    "CFO"|"COO"|"CHRO"|"CMO"|"CPO",
-    string
-  >;
-
-  for (const sec of parts) {
-    const m = /^#{2,3}\s+(CFO|COO|CHRO|CMO|CPO)\b/i.exec(sec);
-    if (!m) continue;
-    const role = m[1].toUpperCase() as keyof typeof map;
-    map[role] = sec.replace(/^#{2,3}\s+\w+\b[^\n]*\n?/, "").trim();
-  }
-  return map;
-}
-
-/** Top-5 collective insights */
-function extractCollectiveInsights(md: string): string[] {
-  const text = clean(md);
-  const m = /#{2,3}\s*Collective\s+Insights[^\n]*\n([\s\S]*?)(?=\n#{2,3}\s+\w+|$)/i.exec(text);
-  const block = m ? m[1] : text;
-  const items = block
-    .split(/\n(?=\s*(?:\d+[.)]|[-*•])\s)/g)
-    .map((p) => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim())
-    .filter(Boolean);
-  if (items.length >= 3) return items.slice(0, 5);
-
-  // fallback: pull a couple from each CXO "Insights" sub-block
-  const cxo = splitByCXO(text);
-  const agg: string[] = [];
-  (["CFO","COO","CHRO","CMO","CPO"] as const).forEach((role) => {
-    const sec = cxo[role];
-    if (!sec) return;
-    const mm = /#{2,3}\s*Insights\s*([\s\S]*?)(?=\n#{2,3}\s*\w+|$)/i.exec(sec);
-    const list = (mm ? mm[1] : sec)
-      .split(/\n(?=\s*(?:\d+[.)]|[-*•])\s)/g)
-      .map((p) => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim())
-      .filter(Boolean);
-    agg.push(...list.slice(0, 2));
+  if (sections.length === 0) return [];
+  return sections.map((sec, i) => {
+    const headerMatch = sec.match(/^#{2,3}\s+(.+)$/m);
+    const name = (headerMatch ? headerMatch[1] : `Section ${i + 1}`).trim();
+    const body = sec.replace(/^#{2,3}\s+.+?\n/, "").trim();
+    const getBlock = (label: string) => {
+      const m = body.match(new RegExp(`#{2,3}\\s*${label}\\s*([\\s\\S]*?)(?=#{2,3}\\s*\\w+|$)`, "i"));
+      return m ? m[1].trim() : undefined;
+    };
+    return { name, insights: getBlock("Insights"), recommendations: getBlock("Recommendations") };
   });
-  return agg.slice(0, 5);
+}
+function extractListItems(text: string): string[] {
+  if (!text) return [];
+  const cleaned = text.replace(/^[\s\S]*?(?=^\s*(?:\d+[.)]|[-*•])\s)/m, "");
+  const parts = cleaned.split(/\n(?=\s*(?:\d+[.)]|[-*•])\s)/g);
+  return parts.map((p) => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim()).filter(Boolean);
+}
+function sentences(text: string): string[] {
+  const clean = text
+    .replace(/^#+\s.*$/gm, " ")
+    .replace(/\n+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return clean.split(/(?<=[.!?])\s+(?=[A-Z(])/).filter((s) => s.length > 40);
+}
+function extractHeadingBlock(md: string, label: string): string {
+  const re = new RegExp(`#{2,3}\\s*${label}\\s*([\\s\\S]*?)(?=\\n#{2,3}\\s*\\w+|$)`, "ig");
+  let out = "";
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(md))) out += (out ? "\n\n" : "") + (m[1] || "");
+  return out.trim();
+}
+function textBeforeRecommendations(md: string): string {
+  const idx = md.search(/#{2,3}\s*Recommendations/i);
+  return idx >= 0 ? md.slice(0, idx) : md;
+}
+function InlineMD({ text }: { text: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ p: (props) => <span {...props} /> }}>
+      {text}
+    </ReactMarkdown>
+  );
+}
+function truncateForDemo(text: string, maxChars = 120, teaser = " _…Upgrade to see the full item._") {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (clean.length <= maxChars) return clean + teaser;
+  const clipped = clean.slice(0, maxChars).replace(/[\s,.-]+[^,.\s-]*$/, "");
+  return clipped + teaser;
+}
+function deriveOneActionFromInsights(insights?: string): string | null {
+  const first = extractListItems(insights || "")[0] || sentences(insights || "")[0];
+  if (!first) return null;
+  if (/^\s*\*\*.+?\*\*\s*:/.test(first)) return first;
+  return `**Priority Action**: ${first}`;
+}
+function looksLikeDemo(text: string) {
+  return /demo preview|upgrade to pro|brains used/i.test(text || "");
+}
+function synthesizeFromContext(seedText: string, fileName?: string) {
+  const src = `${seedText || ""} ${fileName || ""}`.toLowerCase();
+  const hasRevenue = /(revenue|forecast|projection|budget|p&l|profit|invoice|cash\s?flow|collections|ds[o0])/i.test(src);
+  const hasHiring = /(hiring|recruit|offer|headcount|attrition|engagement|talent|people)/i.test(src);
+  const hasOps = /(ops|operations|sla|throughput|backlog|process|capacity)/i.test(src);
+  const insight = hasRevenue
+    ? "**Liquidity exposure from slow collections**: the document context suggests revenue planning and payment timing; extend your cash planning by monitoring DSO and top-account ageing to avoid month-end crunches."
+    : hasHiring
+    ? "**Talent stability risk**: the context points to headcount changes; track acceptance rates and exit drivers by function to prevent productivity loss."
+    : hasOps
+    ? "**Throughput constraint**: there are signals of process load; identify the longest queue (bottleneck) and rebalance work-in-progress limits."
+    : "**Execution risk**: the document hints at important changes; align owners, timelines, and a single KPI per workstream to prevent slippage.";
+  const cfo = hasRevenue
+    ? "**Shorten DSO by 3–5 days**: add early-payment discounts (1/10 net 30) for top 20 AR accounts, automate reminders at +3/+7/+14, and reconcile unapplied cash weekly to lift cash conversion."
+    : "**Tighten spend governance**: enforce PO-before-invoice for vendors, and roll a weekly cash bridge (opening → ops → financing) to forecast runway with ±5% error.";
+  const chro = hasHiring
+    ? "**Stabilize offers & ramp**: set a 48-hour SLA for feedback, publish compensation bands in JD, and run ‘why-we-win/lose’ on offers to lift acceptance by 10–15%."
+    : "**Lower regrettable attrition**: run quarterly stay-interviews for top 10% performers, add manager 1:1 scorecards, and flag teams with >2 back-to-back low eNPS for intervention.";
+  return { insight, cfo, chro };
 }
 
-/** Up to 3 recos from a CXO section */
-function extractRecommendations(cxoSection: string): string[] {
-  if (!cxoSection) return [];
-  const text = clean(cxoSection);
-  const m = /#{2,3}\s*Recommendations\s*([\s\S]*?)(?=\n#{2,3}\s*\w+|$)/i.exec(text);
-  const block = (m ? m[1] : text).trim();
-  return block
-    .split(/\n(?=\s*(?:\d+[.)]|[-*•])\s)/g)
-    .map((p) => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim())
-    .filter(Boolean)
-    .slice(0, 3);
-}
-
-/* ------------------------------ Page ------------------------------ */
-
+/* ---------------- Page ---------------- */
 export default function DashboardPage() {
   const router = useRouter();
   const [token, setToken] = useState<string>("");
@@ -147,7 +171,7 @@ export default function DashboardPage() {
     })();
   }, []);
 
-  // Users with chat tiers don’t use this page; redirect silently
+  /* ✅ Auto-redirect Admin / Premium / Pro+ to Chat Mode */
   useEffect(() => {
     if (!busy && token && (me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus")) {
       router.replace("/premium/chat");
@@ -176,7 +200,7 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen p-6 bg-zinc-950 text-zinc-100">
       <div className="max-w-4xl mx-auto space-y-6">
-        {/* Header */}
+        {/* header */}
         <header className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800">
           <div className="flex items-center justify-between">
             <div>
@@ -201,7 +225,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* CTA row for Demo & Pro */}
+          {/* CTA row for Demo & Pro: Upgrade + Try Chat */}
           {token && (me?.tier === "demo" || me?.tier === "pro") && (
             <div className="mt-3 flex items-center gap-3">
               {me?.tier === "demo" && !me?.is_paid && (
@@ -219,14 +243,15 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {/* If redirecting, show a tiny hint (no flicker) */}
           {token && (me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus") && (
             <div className="mt-2 text-xs opacity-70">Redirecting to Premium Chat…</div>
           )}
         </header>
 
-        {/* Only Demo/Pro use this page */}
+        {/* normal dashboard continues for Demo/Pro only */}
         {!busy && !err && !(me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus") && (
-          <AnalyzeCard token={token} tier={(me?.tier || "demo") as Tier} />
+          <AnalyzeCard token={token} isPaid={!!me?.is_paid} tier={(me?.tier || "demo") as Tier} />
         )}
 
         {busy && token && (
@@ -244,15 +269,15 @@ export default function DashboardPage() {
   );
 }
 
-/* ---------------- Analyze card (with 429 banner) ---------------- */
+/* ---------------- Analyze card (with 429 limit banner) ---------------- */
 
-function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
+function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; tier: Tier }) {
   type LimitInfo = {
     plan?: string;
     used?: number;
     limit?: number;
     remaining?: number;
-    reset_at?: string;
+    reset_at?: string; // ISO string from backend
     title?: string;
     message?: string;
   };
@@ -262,13 +287,13 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [friendlyErr, setFriendlyErr] = useState<string | null>(null);
-  const [limit, setLimit] = useState<LimitInfo | null>(null);
+  const [limit, setLimit] = useState<LimitInfo | null>(null);   // NEW: daily cap banner
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
   function onBrowseClick() { fileInputRef.current?.click(); }
-  function onFileChosen(f?: File | null) { if (f) setFile(f); }
+  function onFileChosen(f: File | undefined | null) { if (f) setFile(f); }
   function onDragOver(e: React.DragEvent) { e.preventDefault(); e.stopPropagation(); setDragActive(true); }
   function onDragLeave(e: React.DragEvent) { e.preventDefault(); e.stopPropagation(); setDragActive(false); }
   function onDrop(e: React.DragEvent) {
@@ -276,7 +301,11 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
     const f = e.dataTransfer.files?.[0]; if (f) setFile(f);
   }
 
-  function resetErrors() { setFriendlyErr(null); setLimit(null); setResult(null); }
+  function resetErrors() {
+    setFriendlyErr(null);
+    setLimit(null);
+    setResult(null);
+  }
 
   function formatUtcShort(iso?: string) {
     if (!iso) return "";
@@ -310,6 +339,7 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
       let parsed: any = {};
       try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
 
+      // explicit 429 handling with banner
       if (res.status === 429) {
         setLimit({
           plan: parsed?.plan, used: parsed?.used, limit: parsed?.limit,
@@ -327,7 +357,12 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
       }
 
       if (parsed?.status === "demo") {
-        setResult({ status: "demo", title: parsed.title || "Demo Mode Result", summary: parsed.summary || "", tip: parsed.tip });
+        setResult({
+          status: "demo",
+          title: parsed.title || "Demo Mode Result",
+          summary: parsed.summary || "",
+          tip: parsed.tip,
+        });
       } else {
         setResult({ status: "ok", title: parsed.title || "Analysis Result", summary: parsed.summary || "", ...parsed });
       }
@@ -340,9 +375,9 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
 
   return (
     <section className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800 space-y-5">
-      <h2 className="text-xl font-semibold">Analyze</h2>
+      <h2 className="text-xl font-semibold">Quick analyze</h2>
 
-      {/* limit banner */}
+      {/* daily limit banner */}
       {limit && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">
           <div className="flex items-start justify-between gap-3">
@@ -356,7 +391,9 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
                 {limit.reset_at && <> Resets at <b>{formatUtcShort(limit.reset_at)}</b>.</>}
               </p>
             </div>
-            <button onClick={() => setLimit(null)} className="text-xs underline hover:no-underline">Dismiss</button>
+            <button onClick={() => setLimit(null)} className="text-xs underline hover:no-underline">
+              Dismiss
+            </button>
           </div>
           {limit.plan === "demo" && (
             <div className="mt-2">
@@ -378,7 +415,9 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
         }`}
       >
         <div className="flex flex-col items-center gap-2 text-center">
-          <svg width="28" height="28" viewBox="0 0 24 24" className="opacity-80"><path fill="currentColor" d="M19 12v7H5v-7H3v9h18v-9zM11 2h2v10h3l-4 4l-4-4h3z" /></svg>
+          <svg width="28" height="28" viewBox="0 0 24 24" className="opacity-80">
+            <path fill="currentColor" d="M19 12v7H5v-7H3v9h18v-9zM11 2h2v10h3l-4 4l-4-4h3z" />
+          </svg>
           <p className="opacity-85">Drag & drop a document here</p>
           <p className="text-xs opacity-60">PDF, DOCX, TXT…</p>
           <button type="button" onClick={onBrowseClick} className="mt-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm">
@@ -387,6 +426,16 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => onFileChosen(e.target.files?.[0] ?? null)} />
         </div>
       </div>
+
+      {/* selected file */}
+      {file && (
+        <div className="flex items-center justify-between rounded-lg bg-zinc-950/60 border border-zinc-800 px-3 py-2 text-sm">
+          <div className="truncate">
+            <span className="opacity-90">{file.name}</span>
+            <span className="opacity-60"> • {(file.size / 1024).toFixed(1)} KB</span>
+          </div>
+        </div>
+      )}
 
       {/* prompt */}
       <div className="space-y-2">
@@ -405,7 +454,7 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
           {busy ? "Analyzing…" : "Analyze"}
         </button>
         <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
-          Need full features? Upgrade
+          {isPaid ? "Manage plan" : "Need full features? Upgrade"}
         </Link>
       </div>
 
@@ -418,107 +467,164 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
       )}
 
       {/* results */}
-      {result && <AnalysisResult md={result.summary || ""} tier={tier} />}
+      {result && (
+        <div className="mt-3">
+          {result.status === "error" ? (
+            <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-200">
+              <h3 className="font-semibold">{result.title || "Analysis Unavailable"}</h3>
+              <p className="text-sm mt-1">{result.message}</p>
+            </div>
+          ) : (
+            <GroupedReport
+              title={result.title || (result.status === "demo" ? "Demo Mode" : "Analysis Result")}
+              md={result.summary || ""}
+              demo={result.status === "demo"}
+              tier={tier}
+            />
+          )}
+        </div>
+      )}
     </section>
   );
 }
 
-/* ---------------- Analysis result renderer ---------------- */
+/* ---------------- Grouped report ---------------- */
 
-function AnalysisResult({ md, tier }: { md: string; tier: Tier }) {
-  const text = clean(md);
+function GroupedReport({
+  title,
+  md,
+  demo = false,
+  tier,
+}: {
+  title: string;
+  md: string;
+  demo?: boolean;
+  tier: Tier;
+}) {
+  const normalized = normalizeAnalysis(md);
 
-  // 1) Insights – top 5
-  const insights = extractCollectiveInsights(text);
+  if (demo) {
+    const { insight, cfo, chro } = synthesizeFromContext("", "");
+    return (
+      <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
+        <h3 className="font-semibold">Demo Mode · CFO, CHRO</h3>
 
-  // 2) All brains (always show the five roles)
-  const roles = ["CFO", "COO", "CHRO", "CMO", "CPO"] as const;
-  const byCXO = splitByCXO(text);
-  const recos: Record<typeof roles[number], string[]> = {
-    CFO: [], COO: [], CHRO: [], CMO: [], CPO: [],
-  };
-  roles.forEach((r) => (recos[r] = extractRecommendations(byCXO[r])));
-
-  const isDemo = tier === "demo";
-  const isPro = tier === "pro";
-  const isChatTier = tier === "pro_plus" || tier === "premium" || tier === "admin";
-
-  return (
-    <div className="space-y-4">
-      {/* Insights */}
-      <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-        <details open>
-          <summary className="cursor-pointer text-sm font-semibold opacity-90">Collective Insights (Top 5)</summary>
+        <details open className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+          <summary className="cursor-pointer text-lg font-medium select-none">Collective Insights (preview)</summary>
           <ol className="mt-3 list-decimal pl-6 space-y-1">
-            {insights.map((it, i) => <li key={i} className="leading-7">{it}</li>)}
+            <li className="leading-7"><InlineMD text={insight} /></li>
+            <li className="leading-7"><InlineMD text={truncateForDemo(insight)} /></li>
           </ol>
         </details>
-      </div>
 
-      {/* Recommendations per brain */}
-      <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-        <div className="text-sm font-semibold opacity-90 mb-2">Recommendations</div>
-        <div className="space-y-3">
-          {roles.map((role) => {
-            const items = recos[role];
-            return (
-              <details key={role} className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
-                <summary className="cursor-pointer text-base font-medium select-none">{role} recommends</summary>
+        <h4 className="text-base font-semibold opacity-90">Recommendations (preview)</h4>
 
-                {/* DEMO: fully locked (no preview) */}
-                {isDemo && <LockedUpsell />}
+        <details className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+          <summary className="cursor-pointer text-lg font-medium select-none">CFO</summary>
+          <ol className="mt-3 list-decimal pl-6 space-y-1">
+            <li className="leading-7"><InlineMD text={cfo} /></li>
+            <li className="leading-7"><InlineMD text={truncateForDemo(cfo)} /></li>
+          </ol>
+        </details>
 
-                {/* PRO: show bullets + upsell */}
-                {isPro && items.length > 0 && (
-                  <>
-                    <ol className="mt-2 list-decimal pl-6 space-y-1">
-                      {items.map((t, i) => <li key={i} className="leading-7">{t}</li>)}
-                    </ol>
-                    <Upsell />
-                  </>
-                )}
+        <details className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+          <summary className="cursor-pointer text-lg font-medium select-none">CHRO</summary>
+          <ol className="mt-3 list-decimal pl-6 space-y-1">
+            <li className="leading-7"><InlineMD text={chro} /></li>
+            <li className="leading-7"><InlineMD text={truncateForDemo(chro)} /></li>
+          </ol>
+        </details>
 
-                {/* PRO+ / PREMIUM / ADMIN: placeholder line only */}
-                {isChatTier && (
-                  <div className="mt-2 text-sm opacity-85">
-                    If you need insights from the CMO, CHRO, and CPO, upgrade to <b>Pro</b>; if you want to chat with CAIO, upgrade to <b>Pro+</b> or <b>Premium</b>.
-                  </div>
-                )}
-              </details>
-            );
-          })}
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 opacity-75">
+          <div className="flex items-center justify-between">
+            <span className="text-lg font-medium">COO / CMO / CPO</span>
+            <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
+              Upgrade to get full access
+            </Link>
+          </div>
+          <p className="mt-2 text-sm opacity-80">Unlock full insights and all 3 recommendations for each role.</p>
         </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
-/* ---------------- Small UI blocks ---------------- */
+  // Parse brains (CFO/COO/CHRO/CMO/CPO) and aggregate top 5 collective
+  const brains = parseBrains(normalized);
+  const collective = (() => {
+    const blocks = brains.map((b) => b.insights || "");
+    const all: string[] = [];
+    blocks.forEach((b) => extractListItems(b).forEach((x) => all.push(x)));
+    const counts = new Map<string, { c: number, text: string }>();
+    for (const it of all) {
+      const key = it.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      counts.set(key, { c: (counts.get(key)?.c ?? 0) + 1, text: it });
+    }
+    const ranked = [...counts.values()].sort((a, b) => b.c - a.c || b.text.length - a.text.length).map((x) => x.text);
+    if (ranked.length >= 5) return ranked.slice(0, 5);
 
-function Upsell() {
+    const unique: string[] = [];
+    const seen = new Set(ranked.map((t) => t.toLowerCase()));
+    for (const b of blocks) {
+      for (const it of extractListItems(b)) {
+        const k = it.toLowerCase();
+        if (!seen.has(k)) { unique.push(it); seen.add(k); }
+        if (ranked.length + unique.length >= 5) break;
+      }
+      if (ranked.length + unique.length >= 5) break;
+    }
+    return ranked.concat(unique).slice(0, 5);
+  })();
+
+  const showUpsell = tier === "demo" || tier === "pro";
+
   return (
-    <div className="mt-3 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
-      <div className="opacity-90">
-        For more insights, upgrade to <b>Pro</b> — or if you want to chat, go for <b>Pro+</b> or <b>Premium</b>.
-      </div>
-      <div className="mt-2 flex gap-2">
-        <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
-        <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
-      </div>
-    </div>
-  );
-}
+    <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
+      <h3 className="font-semibold">{title}</h3>
 
-function LockedUpsell() {
-  return (
-    <div className="mt-2 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
-      <div className="font-semibold mb-1">Locked in Demo</div>
-      <div className="opacity-90">
-        Upgrade to <b>Pro</b> for role-specific recommendations. If you want chat or file uploads, go for <b>Pro+</b> or <b>Premium</b>.
-      </div>
-      <div className="mt-2 flex gap-2">
-        <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
-        <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
+      {collective.length > 0 && (
+        <details open className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+          <summary className="cursor-pointer text-lg font-medium select-none">Collective Insights (Top 5)</summary>
+          <ol className="mt-3 list-decimal pl-6 space-y-1">
+            {collective.map((it, i) => (
+              <li key={i} className="leading-7"><InlineMD text={it} /></li>
+            ))}
+          </ol>
+        </details>
+      )}
+
+      <div className="space-y-3">
+        <h4 className="text-base font-semibold opacity-90">Recommendations</h4>
+        {brains.map((b, i) => {
+          const insightFirst = deriveOneActionFromInsights(b.insights);
+          const top3 = extractListItems(b.recommendations || "").slice(0, 3);
+          return (
+            <details key={i} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <summary className="cursor-pointer text-lg font-medium select-none">{b.name}</summary>
+              {insightFirst && (
+                <div className="mt-2 text-sm opacity-90">
+                  <InlineMD text={insightFirst} />
+                </div>
+              )}
+              <ol className="mt-3 list-decimal pl-6 space-y-1">
+                {top3.map((it, j) => (<li key={j} className="leading-7"><InlineMD text={it} /></li>))}
+              </ol>
+
+              {/* Upsell block under each CXO when not on Pro+/Premium */}
+              {showUpsell && (
+                <div className="mt-3 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
+                  <div className="mb-1 font-semibold">Unlock more for {b.name}</div>
+                  <div className="opacity-90">
+                    For more insights, upgrade to <b>Pro</b> — or if you want to chat, go for <b>Pro+</b> or <b>Premium</b>.
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
+                    <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
+                  </div>
+                </div>
+              )}
+            </details>
+          );
+        })}
       </div>
     </div>
   );
