@@ -41,28 +41,30 @@ function readTokenSafe(): string {
 }
 
 /* ---------- Markdown helpers (spacing + parsing) ---------- */
+// 🔧 accept both `##` and `###` level headings from backend
 function normalizeAnalysis(md: string) {
   let s = (md ?? "").trim();
-  s = s.replace(/\n(?=###\s+)/g, "\n\n");
-  s = s.replace(/(###\s+(Insights|Recommendations|Risks|Actions|Summary))/gi, "\n\n$1");
-  s = s.replace(/(###\s+[A-Z]{2,}.*?)(\s+###\s+)/g, "$1\n\n$2");
+  s = s.replace(/\n(?=#{2,3}\s+)/g, "\n\n");
+  s = s.replace(/(#{2,3}\s+(Insights|Recommendations|Risks|Actions|Summary))/gi, "\n\n$1");
+  s = s.replace(/(#{2,3}\s+[A-Z]{2,}.*?)(\s+#{2,3}\s+)/g, "$1\n\n$2");
   s = s.replace(/(\d\.\s[^\n])(?=\s*\d\.\s)/g, "$1\n");
   s = s.replace(/\n{3,}/g, "\n\n");
   return s;
 }
 type BrainParse = { name: string; insights?: string; recommendations?: string; };
 function parseBrains(md: string): BrainParse[] {
+  // 🔧 split at either `## <ROLE>` or `### <ROLE>`
   const sections = md
-    .split(/\n(?=###\s+[A-Z]{2,}.*$)/gm)
+    .split(/\n(?=#{2,3}\s+[A-Z]{2,}.*$)/gm)
     .map((s) => s.trim())
     .filter(Boolean);
   if (sections.length === 0) return [];
   return sections.map((sec, i) => {
-    const headerMatch = sec.match(/^###\s+(.+)$/m);
+    const headerMatch = sec.match(/^#{2,3}\s+(.+)$/m);
     const name = (headerMatch ? headerMatch[1] : `Section ${i + 1}`).trim();
-    const body = sec.replace(/^###\s+.+?\n/, "").trim();
+    const body = sec.replace(/^#{2,3}\s+.+?\n/, "").trim();
     const getBlock = (label: string) => {
-      const m = body.match(new RegExp(`###\\s*${label}\\s*([\\s\\S]*?)(?=###\\s*\\w+|$)`, "i"));
+      const m = body.match(new RegExp(`#{2,3}\\s*${label}\\s*([\\s\\S]*?)(?=#{2,3}\\s*\\w+|$)`, "i"));
       return m ? m[1].trim() : undefined;
     };
     return { name, insights: getBlock("Insights"), recommendations: getBlock("Recommendations") };
@@ -83,14 +85,14 @@ function sentences(text: string): string[] {
   return clean.split(/(?<=[.!?])\s+(?=[A-Z(])/).filter((s) => s.length > 40);
 }
 function extractHeadingBlock(md: string, label: string): string {
-  const re = new RegExp(`###\\s*${label}\\s*([\\s\\S]*?)(?=\\n###\\s*\\w+|$)`, "ig");
+  const re = new RegExp(`#{2,3}\\s*${label}\\s*([\\s\\S]*?)(?=\\n#{2,3}\\s*\\w+|$)`, "ig");
   let out = "";
   let m: RegExpExecArray | null;
   while ((m = re.exec(md))) out += (out ? "\n\n" : "") + (m[1] || "");
   return out.trim();
 }
 function textBeforeRecommendations(md: string): string {
-  const idx = md.search(/###\s*Recommendations/i);
+  const idx = md.search(/#{2,3}\s*Recommendations/i);
   return idx >= 0 ? md.slice(0, idx) : md;
 }
 function InlineMD({ text }: { text: string }) {
@@ -238,7 +240,6 @@ export default function DashboardPage() {
               >
                 Try Chat
               </Link>
-
             </div>
           )}
 
@@ -250,7 +251,7 @@ export default function DashboardPage() {
 
         {/* normal dashboard continues for Demo/Pro only */}
         {!busy && !err && !(me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus") && (
-          <AnalyzeCard token={token} isPaid={!!me?.is_paid} />
+          <AnalyzeCard token={token} isPaid={!!me?.is_paid} tier={(me?.tier || "demo") as Tier} />
         )}
 
         {busy && token && (
@@ -270,7 +271,7 @@ export default function DashboardPage() {
 
 /* ---------------- Analyze card (with 429 limit banner) ---------------- */
 
-function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
+function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; tier: Tier }) {
   type LimitInfo = {
     plan?: string;
     used?: number;
@@ -478,6 +479,7 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
               title={result.title || (result.status === "demo" ? "Demo Mode" : "Analysis Result")}
               md={result.summary || ""}
               demo={result.status === "demo"}
+              tier={tier}
             />
           )}
         </div>
@@ -488,7 +490,17 @@ function AnalyzeCard({ token, isPaid }: { token: string; isPaid: boolean }) {
 
 /* ---------------- Grouped report ---------------- */
 
-function GroupedReport({ title, md, demo = false }: { title: string; md: string; demo?: boolean }) {
+function GroupedReport({
+  title,
+  md,
+  demo = false,
+  tier,
+}: {
+  title: string;
+  md: string;
+  demo?: boolean;
+  tier: Tier;
+}) {
   const normalized = normalizeAnalysis(md);
 
   if (demo) {
@@ -536,6 +548,7 @@ function GroupedReport({ title, md, demo = false }: { title: string; md: string;
     );
   }
 
+  // Parse brains (CFO/COO/CHRO/CMO/CPO) and aggregate top 5 collective
   const brains = parseBrains(normalized);
   const collective = (() => {
     const blocks = brains.map((b) => b.insights || "");
@@ -562,6 +575,8 @@ function GroupedReport({ title, md, demo = false }: { title: string; md: string;
     return ranked.concat(unique).slice(0, 5);
   })();
 
+  const showUpsell = tier === "demo" || tier === "pro";
+
   return (
     <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
       <h3 className="font-semibold">{title}</h3>
@@ -580,13 +595,33 @@ function GroupedReport({ title, md, demo = false }: { title: string; md: string;
       <div className="space-y-3">
         <h4 className="text-base font-semibold opacity-90">Recommendations</h4>
         {brains.map((b, i) => {
+          const insightFirst = deriveOneActionFromInsights(b.insights);
           const top3 = extractListItems(b.recommendations || "").slice(0, 3);
           return (
             <details key={i} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
               <summary className="cursor-pointer text-lg font-medium select-none">{b.name}</summary>
+              {insightFirst && (
+                <div className="mt-2 text-sm opacity-90">
+                  <InlineMD text={insightFirst} />
+                </div>
+              )}
               <ol className="mt-3 list-decimal pl-6 space-y-1">
                 {top3.map((it, j) => (<li key={j} className="leading-7"><InlineMD text={it} /></li>))}
               </ol>
+
+              {/* Upsell block under each CXO when not on Pro+/Premium */}
+              {showUpsell && (
+                <div className="mt-3 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
+                  <div className="mb-1 font-semibold">Unlock more for {b.name}</div>
+                  <div className="opacity-90">
+                    For more insights, upgrade to <b>Pro</b> — or if you want to chat, go for <b>Pro+</b> or <b>Premium</b>.
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
+                    <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
+                  </div>
+                </div>
+              )}
             </details>
           );
         })}
