@@ -11,10 +11,8 @@ const API_BASE =
 
 type Currency = "USD" | "INR";
 
-/** What we *expect* from /api/public-config — kept intentionally loose */
+/** What we *expect* from /api/public-config — intentionally loose */
 type PublicConfig = Partial<{
-  currency: Record<Currency, { symbol: string }>;
-  // Flexible pricing shape; we normalize it below
   pricing: any;
   pay: Partial<{ defaultCurrency: Currency }>;
 }>;
@@ -33,7 +31,6 @@ function getToken(): string | null {
 function guessCurrencyFromLocale(): Currency {
   try {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
-    // Simple heuristic: if user timezone contains "Asia", default to INR
     return /asia/i.test(tz) ? "INR" : "USD";
   } catch {
     return "USD";
@@ -55,7 +52,6 @@ type PriceTable = {
 /* Take whatever the backend returns and coerce into our PriceTable.
    Fallback to our current product prices if a key is missing. */
 function normalizePricing(cfg?: PublicConfig): PriceTable {
-  // Current default prices (can be safely changed without breaking the UI)
   const fallback: PriceTable = {
     pro: { USD: 25, INR: 1999 },
     pro_plus: { USD: 49, INR: 3999 },
@@ -63,10 +59,6 @@ function normalizePricing(cfg?: PublicConfig): PriceTable {
   };
 
   const anyPricing = cfg?.pricing ?? {};
-  // Try a few common shapes:
-  //  1) { plans: { pro: { USD: 25, INR: 1999 }, ... } }
-  //  2) { pro: { USD: 25, INR: 1999 }, ... }
-  //  3) { USD: { pro: 25, pro_plus: 49, premium: 99 }, INR: {...} }
   const p1 = anyPricing?.plans ?? anyPricing;
 
   const fromPerPlan =
@@ -115,7 +107,6 @@ export default function PaymentsPage() {
       setErr(null);
       try {
         const r = await fetch(`${API_BASE}/api/public-config`, { cache: "no-store" });
-        // Parse defensively; don’t assume a shape.
         const raw = await r.text();
         let cfg: PublicConfig = {};
         try {
@@ -126,12 +117,11 @@ export default function PaymentsPage() {
 
         setPrices(normalizePricing(cfg));
 
-        // Pick a default currency safely (no more c?.pay on {} blowups)
+        // Auto-pick currency: backend defaultCurrency wins; otherwise timezone guess
         const def: Currency =
           (cfg && cfg.pay && (cfg.pay.defaultCurrency as Currency)) || guessCurrencyFromLocale();
         setCurrency(def);
       } catch (e: any) {
-        // Still choose a sensible currency even if the call fails
         setCurrency(guessCurrencyFromLocale());
         setErr(e?.message || "Couldn’t load pricing.");
       } finally {
@@ -160,7 +150,6 @@ export default function PaymentsPage() {
       }
 
       if (res.status === 405) {
-        // Helpful hint while backend route is being wired
         throw new Error(
           "Method Not Allowed — is /api/pay/create-checkout-session (POST) implemented on the backend and mounted under /api?"
         );
@@ -174,7 +163,6 @@ export default function PaymentsPage() {
     }
   }
 
-  const sym = currency === "INR" ? "₹" : "$";
   const price = {
     pro: prices.pro[currency],
     pro_plus: prices.pro_plus[currency],
@@ -194,17 +182,9 @@ export default function PaymentsPage() {
           </Link>
         </div>
 
-        {/* Currency picker (client-side only) */}
-        <div className="flex items-center gap-2">
-          <span className="text-sm opacity-80">Billing currency:</span>
-          <select
-            className="bg-zinc-900 border border-zinc-700 rounded-md px-2 py-1 text-sm"
-            value={currency}
-            onChange={(e) => setCurrency((e.target.value as Currency) || "USD")}
-          >
-            <option value="USD">USD (US Dollar)</option>
-            <option value="INR">INR (Indian Rupee)</option>
-          </select>
+        {/* Small note showing auto-detected currency; no dropdown */}
+        <div className="text-sm opacity-80">
+          Billing currency: <span className="font-medium">{currency}</span> (auto-detected)
         </div>
 
         {err && (
@@ -264,9 +244,9 @@ export default function PaymentsPage() {
         </div>
 
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 text-sm opacity-85">
-          Need custom seats or invoicing?{" "}
+          Payment questions?{" "}
           <a className="underline text-blue-300 hover:text-blue-200" href="mailto:hello@caio.ai">
-            Contact us
+            Contact support
           </a>
           .
         </div>
