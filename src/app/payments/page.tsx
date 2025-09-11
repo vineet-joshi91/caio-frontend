@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import Link from "next/link";
 
 /* ------------------------------ Config ------------------------------ */
@@ -30,13 +30,10 @@ type PriceTable = {
 
 /* ------------------------------ Helpers ------------------------------ */
 
-function getToken() {
+function getToken(): string {
   try {
-    return (
-      (typeof window !== "undefined" && localStorage.getItem("token")) ||
-      (typeof window !== "undefined" && localStorage.getItem("access_token")) ||
-      ""
-    );
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem("token") || localStorage.getItem("access_token") || "";
   } catch {
     return "";
   }
@@ -66,18 +63,16 @@ function normalizePricing(cfg?: PublicConfig): PriceTable {
           },
           pro_plus: {
             USD: Number(
-              p1?.pro_plus?.USD ?? p1?.pro_plus?.price_usd ?? p1?.pro_plus?.priceUSD ?? p1?.pro_plus?.price ?? 49
+              p1?.pro_plus?.USD ?? p1?.pro_plus?.price_usd ?? p1?.pro_plus?.priceUSD ?? p1?.pro_plus?.price ?? 49,
             ),
             INR: Number(
-              p1?.pro_plus?.INR ?? p1?.pro_plus?.price_inr ?? p1?.pro_plus?.priceINR ?? p1?.pro_plus?.price ?? 3999
+              p1?.pro_plus?.INR ?? p1?.pro_plus?.price_inr ?? p1?.pro_plus?.priceINR ?? p1?.pro_plus?.price ?? 3999,
             ),
           },
           premium: {
-            USD: Number(
-              p1?.premium?.USD ?? p1?.premium?.price_usd ?? p1?.premium?.priceUSD ?? p1?.premium?.price ?? 99
-            ),
+            USD: Number(p1?.premium?.USD ?? p1?.premium?.price_usd ?? p1?.premium?.priceUSD ?? p1?.premium?.price ?? 99),
             INR: Number(
-              p1?.premium?.INR ?? p1?.premium?.price_inr ?? p1?.premium?.priceINR ?? p1?.premium?.price ?? 7999
+              p1?.premium?.INR ?? p1?.premium?.price_inr ?? p1?.premium?.priceINR ?? p1?.premium?.price ?? 7999,
             ),
           },
         }
@@ -87,7 +82,9 @@ function normalizePricing(cfg?: PublicConfig): PriceTable {
 
   const p2 = cfg?.plans ?? {};
   const fromPlansCurrencyResolved =
-    typeof p2?.pro?.price === "number" && typeof p2?.pro_plus?.price === "number" && typeof p2?.premium?.price === "number"
+    typeof p2?.pro?.price === "number" &&
+    typeof p2?.pro_plus?.price === "number" &&
+    typeof p2?.premium?.price === "number"
       ? {
           pro: { USD: Number(p2.pro.price), INR: Number(p2.pro.price) },
           pro_plus: { USD: Number(p2.pro_plus.price), INR: Number(p2.pro_plus.price) },
@@ -104,7 +101,7 @@ function normalizePricing(cfg?: PublicConfig): PriceTable {
 
 export default function PaymentsPage() {
   const token = useMemo(getToken, []);
-  const [loadingConfig, setLoadingConfig] = useState(true);
+  const [loadingConfig, setLoadingConfig] = useState<boolean>(true);
   const [checkoutPlan, setCheckoutPlan] = useState<null | "pro" | "pro_plus" | "premium">(null);
   const [err, setErr] = useState<string | null>(null);
   const [currency, setCurrency] = useState<Currency>("USD");
@@ -141,43 +138,49 @@ export default function PaymentsPage() {
     })();
   }, []);
 
-  async function startCheckout(plan: "pro" | "pro_plus" | "premium") {
-    setErr(null);
-    setCheckoutPlan(plan);
-    try {
-      const res = await fetch(`${API_BASE}/api/payments/subscription/create`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ plan, currency }),
-        credentials: "include",
-      });
-
-      const bodyText = await res.text();
-      let j: any = {};
+  const startCheckout = useCallback(
+    async (plan: "pro" | "pro_plus" | "premium") => {
+      setErr(null);
+      setCheckoutPlan(plan);
       try {
-        j = bodyText ? JSON.parse(bodyText) : {};
-      } catch {
-        j = {};
-      }
+        const res = await fetch(`${API_BASE}/api/payments/subscription/create`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ plan, currency }),
+          credentials: "include",
+        });
 
-      if (res.status === 405) {
-        throw new Error(
-          "Method Not Allowed — is /api/payments/subscription/create (POST) implemented on the backend and mounted under /api?"
-        );
+        const bodyText = await res.text();
+        let j: any = {};
+        try {
+          j = bodyText ? JSON.parse(bodyText) : {};
+        } catch {
+          j = {};
+        }
+
+        if (res.status === 405) {
+          throw new Error(
+            "Method Not Allowed — is /api/payments/subscription/create (POST) implemented and mounted under /api?",
+          );
+        }
+        if (res.status === 401) {
+          throw new Error("You must be signed in to start a subscription.");
+        }
+        if (!res.ok || !(j?.short_url || j?.url)) {
+          throw new Error(j?.detail || j?.message || bodyText || `Checkout failed (HTTP ${res.status}).`);
+        }
+        window.location.href = (j.short_url || j.url) as string;
+      } catch (e: any) {
+        setErr(e?.message || "Could not start checkout.");
+      } finally {
+        setCheckoutPlan(null);
       }
-      if (!res.ok || !(j?.short_url || j?.url)) {
-        throw new Error(j?.detail || j?.message || bodyText || `Checkout failed (HTTP ${res.status}).`);
-      }
-      window.location.href = (j.short_url || j.url) as string;
-    } catch (e: any) {
-      setErr(e?.message || "Could not start checkout.");
-    } finally {
-      setCheckoutPlan(null);
-    }
-  }
+    },
+    [token, currency],
+  );
 
   const price = {
     pro: prices.pro[currency],
@@ -186,7 +189,7 @@ export default function PaymentsPage() {
   };
 
   return (
-    <main className="mx-auto max-w-5xl p-4 md:p-8">
+    <main className="mx-auto max-w-5xl p-4 md:p-8" data-test-id="payments-page">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Upgrade your CAIO plan</h1>
         <Link className="text-sm text-blue-300 underline hover:text-blue-200" href="/dashboard">
@@ -196,12 +199,14 @@ export default function PaymentsPage() {
 
       {/* Billing currency banner */}
       <div className="mb-6 rounded-lg border border-zinc-700 bg-zinc-900/50 p-3 text-sm">
-        Billing currency: <b>{currency}</b> (auto‑detected)
+        Billing currency: <b>{currency}</b> (auto-detected)
+        <span className="ml-2 opacity-60">• API: {API_BASE}</span>
+        {loadingConfig && <span className="ml-2 animate-pulse opacity-60">• Loading config…</span>}
       </div>
 
       {/* Error banner */}
       {err && (
-        <div className="mb-6 rounded-lg border border-red-700 bg-red-900/30 p-4 text-red-100">
+        <div className="mb-6 rounded-lg border border-red-700 bg-red-900/30 p-4 text-red-100" role="alert">
           <div className="font-semibold">We hit a snag</div>
           <div className="text-sm opacity-90">{err}</div>
         </div>
@@ -212,15 +217,12 @@ export default function PaymentsPage() {
         <PlanCard
           title="Pro"
           price={`${currency === "INR" ? "₹" : "$"}${price.pro}/mo`}
-          features={[
-            "Full analysis engine (OpenRouter)",
-            "Higher limits than Demo",
-            "Email support",
-          ]}
+          features={["Full analysis engine (OpenRouter)", "Higher limits than Demo", "Email support"]}
           cta="Start subscription"
           onClick={() => startCheckout("pro")}
           button="bg-blue-600 hover:bg-blue-500"
           loading={checkoutPlan === "pro"}
+          dataAttrs={{ "data-plan": "pro" }}
         />
 
         <PlanCard
@@ -231,6 +233,8 @@ export default function PaymentsPage() {
           onClick={() => startCheckout("pro_plus")}
           button="bg-fuchsia-600 hover:bg-fuchsia-500"
           loading={checkoutPlan === "pro_plus"}
+          highlight={false}
+          dataAttrs={{ "data-plan": "pro_plus" }}
         />
 
         <PlanCard
@@ -240,14 +244,15 @@ export default function PaymentsPage() {
           cta="Start Premium"
           onClick={() => startCheckout("premium")}
           button="bg-emerald-600 hover:bg-emerald-500"
-          highlight
           loading={checkoutPlan === "premium"}
+          highlight
+          dataAttrs={{ "data-plan": "premium" }}
         />
       </div>
 
       <div className="mt-8">
         <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-4 text-sm opacity-85">
-          Payment questions? {" "}
+          Payment questions?{" "}
           <a className="underline text-blue-300 hover:text-blue-200" href="mailto:hello@caio.ai">
             Contact support
           </a>
@@ -269,15 +274,15 @@ function PlanCard(props: {
   button: string;
   highlight?: boolean;
   loading?: boolean;
+  dataAttrs?: Record<string, string>;
 }) {
-  const { title, price, features, cta, onClick, button, highlight, loading } = props;
+  const { title, price, features, cta, onClick, button, highlight, loading, dataAttrs } = props;
   return (
     <div
       className={`rounded-2xl border p-6 shadow-sm transition-colors ${
-        highlight
-          ? "border-emerald-400/40 bg-emerald-400/5"
-          : "border-zinc-700 bg-zinc-900/40 hover:bg-zinc-900/60"
+        highlight ? "border-emerald-400/40 bg-emerald-400/5" : "border-zinc-700 bg-zinc-900/40 hover:bg-zinc-900/60"
       }`}
+      {...(dataAttrs || {})}
     >
       <div className="mb-1 text-sm uppercase tracking-wide opacity-70">{title}</div>
       <div className="mb-4 text-3xl font-bold">{price}</div>
@@ -292,6 +297,8 @@ function PlanCard(props: {
         onClick={onClick}
         disabled={!!loading}
         className={`mt-4 w-full rounded-lg px-4 py-2 text-white ${button} disabled:opacity-60`}
+        aria-busy={loading ? "true" : "false"}
+        aria-disabled={loading ? "true" : "false"}
       >
         {loading ? "Loading…" : cta}
       </button>
