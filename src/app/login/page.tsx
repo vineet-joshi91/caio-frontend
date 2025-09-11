@@ -17,7 +17,6 @@ export default function LoginPage() {
   const [err, setErr] = useState<string | null>(null);
   const [debug, setDebug] = useState<{ url: string; status?: string; body?: string } | null>(null);
   const [busy, setBusy] = useState(false);
-
   const [warmMsg, setWarmMsg] = useState("Checking server…");
 
   function saveToken(token: string) {
@@ -27,37 +26,36 @@ export default function LoginPage() {
       localStorage.setItem("access_token", token);
     } catch {}
   }
-
-  function clearAuth() {
+  function clearAuthClient() {
     try {
       localStorage.removeItem("token");
       localStorage.removeItem("access_token");
     } catch {}
     document.cookie = "token=; Path=/; Max-Age=0; SameSite=Lax";
   }
+  async function backendLogout() {
+    // best-effort: try both, ignore failures (handles HttpOnly cookie)
+    try { await fetch(`${API_BASE}/api/logout`, { method: "POST", credentials: "include" }); } catch {}
+    try { await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" }); } catch {}
+  }
 
   async function fetchWithTimeout(url: string, init?: RequestInit, ms = TIMEOUT_MS) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ms);
-    try {
-      return await fetch(url, { ...init, signal: controller.signal });
-    } finally {
-      clearTimeout(timer);
-    }
+    try { return await fetch(url, { ...init, signal: controller.signal }); }
+    finally { clearTimeout(timer); }
   }
 
   async function warmBackend() {
     setWarmMsg("Warming app…");
     try { await fetchWithTimeout(`${API_BASE}/api/health`, { cache: "no-store" }, 8000); } catch {}
-
     setWarmMsg("Warming database…");
-    let delay = 800;
-    let waited = 0;
+    let delay = 800, waited = 0;
     while (waited < WARMUP_MAX_MS) {
       try {
-        const r = await fetchWithTimeout(`${API_BASE}/api/ready`, { cache: "no-store" }, 8000);
-        if (r.ok) {
-          const j = await r.json().catch(() => ({}));
+        const rdy = await fetchWithTimeout(`${API_BASE}/api/ready`, { cache: "no-store" }, 8000);
+        if (rdy.ok) {
+          const j = await rdy.json().catch(() => ({}));
           if (j?.ok || j?.ready) { setWarmMsg("Server is ready"); return; }
         }
       } catch {}
@@ -65,26 +63,26 @@ export default function LoginPage() {
       waited += delay;
       delay = Math.min(Math.floor(delay * 1.6), 4000);
     }
-    setWarmMsg("Server took too long to fully wake. You can still try logging in.");
+    setWarmMsg("Server took long to wake. You can still try logging in.");
   }
 
   useEffect(() => { warmBackend(); }, []);
 
   async function postLogin(): Promise<{ ok: boolean; data?: any; status?: string; text?: string }> {
     const url = `${API_BASE}/api/login`;
-    const body = new URLSearchParams({ username: form.email, password: form.password }).toString();
+    const body = new URLSearchParams({ username: form.email.trim(), password: form.password }).toString();
     try {
       const res = await fetchWithTimeout(url, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body,
         cache: "no-store",
+        credentials: "include",
       }, TIMEOUT_MS);
       const text = await res.text();
-      let data: any = {};
-      try { data = text ? JSON.parse(text) : {}; } catch {}
+      let data: any = {}; try { data = text ? JSON.parse(text) : {}; } catch {}
       setDebug({ url, status: `${res.status} ${res.statusText}`, body: text || "(empty)" });
-      return { ok: res.ok, data, status: `${res.status}`, text };
+      return { ok: res.ok, data, status: String(res.status), text };
     } catch (e: any) {
       setDebug({ url, status: "timeout/network", body: String(e?.message || e) });
       return { ok: false, status: "timeout" };
@@ -93,26 +91,22 @@ export default function LoginPage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setErr(null);
-    setDebug(null);
-    setBusy(true);
+    setErr(null); setDebug(null); setBusy(true);
     try {
       let resp = await postLogin();
       for (let i = 0; i < 2 && (!resp.ok && resp.status === "timeout"); i++) {
-        await new Promise(res => setTimeout(res, 1500 * (i + 1)));
+        await new Promise(res => setTimeout(res, 1200 * (i + 1)));
         try { await fetchWithTimeout(`${API_BASE}/api/ready`, { cache: "no-store" }, 8000); } catch {}
         resp = await postLogin();
       }
-
       if (!resp.ok) {
-        const msg =
-          resp.status === "timeout"
-            ? "Server is waking up. Please try again."
-            : resp?.data?.detail || `Login failed (${resp.status})`;
+        const msg = resp.status === "timeout"
+          ? "Server is waking up. Please try again."
+          : resp?.data?.detail || `Login failed (${resp.status})`;
         throw new Error(msg);
       }
-
       if (resp.data?.access_token) saveToken(resp.data.access_token);
+      // Let dashboard decide where to send you based on tier
       r.replace("/dashboard");
     } catch (e: any) {
       setErr(String(e?.message || e));
@@ -121,9 +115,10 @@ export default function LoginPage() {
     }
   }
 
-  function goToSignup() {
-    // CRITICAL: ensure signup flow starts anonymous
-    clearAuth();
+  async function goToSignup() {
+    // CRITICAL: clear server and client auth so signup is anonymous
+    await backendLogout();
+    clearAuthClient();
     window.location.href = "/signup";
   }
 
@@ -137,26 +132,16 @@ export default function LoginPage() {
 
         <label style={label}>
           Work email
-          <input
-            required
-            type="email"
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-            style={input}
-            placeholder="you@company.com"
-          />
+          <input required type="email" value={form.email}
+                 onChange={(e) => setForm({ ...form, email: e.target.value })}
+                 style={input} placeholder="you@company.com" />
         </label>
 
         <label style={label}>
           Password
-          <input
-            required
-            type="password"
-            value={form.password}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
-            style={input}
-            placeholder="••••••••"
-          />
+          <input required type="password" value={form.password}
+                 onChange={(e) => setForm({ ...form, password: e.target.value })}
+                 style={input} placeholder="••••••••" />
         </label>
 
         {err ? <div style={errBox}>{err}</div> : null}
@@ -179,7 +164,8 @@ export default function LoginPage() {
 
         <div style={{ marginTop: 10, fontSize: 13 }}>
           New here?{" "}
-          <button type="button" onClick={goToSignup} style={{ color: "#93c5fd", background: "none", border: 0, padding: 0, cursor: "pointer" }}>
+          <button type="button" onClick={goToSignup}
+                  style={{ color: "#93c5fd", background: "none", border: 0, padding: 0, cursor: "pointer" }}>
             Create an account
           </button>
         </div>
