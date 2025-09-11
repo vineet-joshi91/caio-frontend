@@ -14,43 +14,39 @@ type Currency = "USD" | "INR";
 /** What we *expect* from /api/public-config — intentionally loose */
 type PublicConfig = Partial<{
   pricing: any;
-  pay: Partial<{ defaultCurrency: Currency }>;
+  plans: any;
+  region: string;
+  currency: Currency;
+  flags: any;
+  copy: any;
 }>;
 
-/* ------------------------------ Utils ------------------------------ */
-
-function getToken(): string | null {
-  try {
-    const m = document.cookie.match(/(?:^|;\s*)token=([^;]+)/);
-    return m ? decodeURIComponent(m[1]) : localStorage.getItem("token") || localStorage.getItem("access_token");
-  } catch {
-    return null;
-  }
-}
-
-function guessCurrencyFromLocale(): Currency {
-  try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
-    return /asia/i.test(tz) ? "INR" : "USD";
-  } catch {
-    return "USD";
-  }
-}
-
-function fmt(amount: number, currency: Currency) {
-  const opts: Intl.NumberFormatOptions = { style: "currency", currency, maximumFractionDigits: 0 };
-  return new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", opts).format(amount);
-}
-
-/* Normalized pricing shape we’ll use in the UI */
+/** Our normalized table the UI will actually use */
 type PriceTable = {
   pro: Record<Currency, number>;
   pro_plus: Record<Currency, number>;
   premium: Record<Currency, number>;
 };
 
-/* Take whatever the backend returns and coerce into our PriceTable.
-   Fallback to our current product prices if a key is missing. */
+/* ------------------------------ Helpers ------------------------------ */
+
+function getToken() {
+  try {
+    return (
+      (typeof window !== "undefined" && localStorage.getItem("token")) ||
+      (typeof window !== "undefined" && localStorage.getItem("access_token")) ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Normalize the many shapes we have seen the public-config return.
+ * This accepts either a `pricing` object or a `plans` object.
+ * Fallback to our current product prices if a key is missing.
+ */
 function normalizePricing(cfg?: PublicConfig): PriceTable {
   const fallback: PriceTable = {
     pro: { USD: 25, INR: 1999 },
@@ -64,30 +60,42 @@ function normalizePricing(cfg?: PublicConfig): PriceTable {
   const fromPerPlan =
     p1?.pro && p1?.pro_plus && p1?.premium
       ? {
-          pro: { USD: Number(p1.pro.USD ?? p1.pro.usd ?? fallback.pro.USD), INR: Number(p1.pro.INR ?? p1.pro.inr ?? fallback.pro.INR) },
+          pro: {
+            USD: Number(p1?.pro?.USD ?? p1?.pro?.price_usd ?? p1?.pro?.priceUSD ?? p1?.pro?.price ?? 25),
+            INR: Number(p1?.pro?.INR ?? p1?.pro?.price_inr ?? p1?.pro?.priceINR ?? p1?.pro?.price ?? 1999),
+          },
           pro_plus: {
-            USD: Number(p1.pro_plus.USD ?? p1.pro_plus.usd ?? fallback.pro_plus.USD),
-            INR: Number(p1.pro_plus.INR ?? p1.pro_plus.inr ?? fallback.pro_plus.INR),
+            USD: Number(
+              p1?.pro_plus?.USD ?? p1?.pro_plus?.price_usd ?? p1?.pro_plus?.priceUSD ?? p1?.pro_plus?.price ?? 49
+            ),
+            INR: Number(
+              p1?.pro_plus?.INR ?? p1?.pro_plus?.price_inr ?? p1?.pro_plus?.priceINR ?? p1?.pro_plus?.price ?? 3999
+            ),
           },
           premium: {
-            USD: Number(p1.premium.USD ?? p1.premium.usd ?? fallback.premium.USD),
-            INR: Number(p1.premium.INR ?? p1.premium.inr ?? fallback.premium.INR),
+            USD: Number(
+              p1?.premium?.USD ?? p1?.premium?.price_usd ?? p1?.premium?.priceUSD ?? p1?.premium?.price ?? 99
+            ),
+            INR: Number(
+              p1?.premium?.INR ?? p1?.premium?.price_inr ?? p1?.premium?.priceINR ?? p1?.premium?.price ?? 7999
+            ),
           },
         }
       : null;
 
   if (fromPerPlan) return fromPerPlan as PriceTable;
 
-  const fromPerCurrency =
-    p1?.USD && p1?.INR
+  const p2 = cfg?.plans ?? {};
+  const fromPlansCurrencyResolved =
+    typeof p2?.pro?.price === "number" && typeof p2?.pro_plus?.price === "number" && typeof p2?.premium?.price === "number"
       ? {
-          pro: { USD: Number(p1.USD.pro ?? fallback.pro.USD), INR: Number(p1.INR.pro ?? fallback.pro.INR) },
-          pro_plus: { USD: Number(p1.USD.pro_plus ?? fallback.pro_plus.USD), INR: Number(p1.INR.pro_plus ?? fallback.pro_plus.INR) },
-          premium: { USD: Number(p1.USD.premium ?? fallback.premium.USD), INR: Number(p1.INR.premium ?? fallback.premium.INR) },
+          pro: { USD: Number(p2.pro.price), INR: Number(p2.pro.price) },
+          pro_plus: { USD: Number(p2.pro_plus.price), INR: Number(p2.pro_plus.price) },
+          premium: { USD: Number(p2.premium.price), INR: Number(p2.premium.price) },
         }
       : null;
 
-  if (fromPerCurrency) return fromPerCurrency as PriceTable;
+  if (fromPlansCurrencyResolved) return fromPlansCurrencyResolved as PriceTable;
 
   return fallback;
 }
@@ -99,12 +107,14 @@ export default function PaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [currency, setCurrency] = useState<Currency>("USD");
-  const [prices, setPrices] = useState<PriceTable>(() => normalizePricing());
+  const [prices, setPrices] = useState<PriceTable>({
+    pro: { USD: 25, INR: 1999 },
+    pro_plus: { USD: 49, INR: 3999 },
+    premium: { USD: 99, INR: 7999 },
+  });
 
   useEffect(() => {
     (async () => {
-      setLoading(true);
-      setErr(null);
       try {
         const r = await fetch(`${API_BASE}/api/public-config`, { cache: "no-store" });
         const raw = await r.text();
@@ -117,13 +127,13 @@ export default function PaymentsPage() {
 
         setPrices(normalizePricing(cfg));
 
-        // Auto-pick currency: backend defaultCurrency wins; otherwise timezone guess
-        const def: Currency =
-          (cfg && cfg.pay && (cfg.pay.defaultCurrency as Currency)) || guessCurrencyFromLocale();
-        setCurrency(def);
+        // Auto-pick currency: server-specified currency wins, else region heuristic.
+        const c1 = (cfg?.currency as Currency | undefined) || null;
+        const region = (cfg?.region || "").toUpperCase();
+        const c2: Currency = region === "IN" || region === "INDIA" ? "INR" : "USD";
+        setCurrency((c1 || c2) as Currency);
       } catch (e: any) {
-        setCurrency(guessCurrencyFromLocale());
-        setErr(e?.message || "Couldn’t load pricing.");
+        console.error("/api/public-config failed:", e?.message || e);
       } finally {
         setLoading(false);
       }
@@ -133,14 +143,16 @@ export default function PaymentsPage() {
   async function startCheckout(plan: "pro" | "pro_plus" | "premium") {
     setErr(null);
     try {
-      const res = await fetch(`${API_BASE}/api/pay/create-checkout-session`, {
+      const res = await fetch(`${API_BASE}/api/payments/subscription/create`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ plan, currency }),
+        credentials: "include",
       });
+
       const bodyText = await res.text();
       let j: any = {};
       try {
@@ -151,13 +163,13 @@ export default function PaymentsPage() {
 
       if (res.status === 405) {
         throw new Error(
-          "Method Not Allowed — is /api/pay/create-checkout-session (POST) implemented on the backend and mounted under /api?"
+          "Method Not Allowed — is /api/payments/subscription/create (POST) implemented on the backend and mounted under /api?"
         );
       }
-      if (!res.ok || !j?.url) {
+      if (!res.ok || !(j?.short_url || j?.url)) {
         throw new Error(j?.detail || j?.message || bodyText || `Checkout failed (HTTP ${res.status}).`);
       }
-      window.location.href = j.url as string;
+      window.location.href = (j.short_url || j.url) as string;
     } catch (e: any) {
       setErr(e?.message || "Could not start checkout.");
     }
@@ -170,81 +182,65 @@ export default function PaymentsPage() {
   };
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
-      <div className="max-w-4xl mx-auto space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">Upgrade your CAIO plan</h1>
-          <Link
-            href="/dashboard"
-            className="px-3 py-1.5 rounded-md border border-zinc-700 hover:bg-zinc-900"
-          >
-            ← Back to dashboard
-          </Link>
+    <main className="mx-auto max-w-5xl p-4 md:p-8">
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Upgrade your CAIO plan</h1>
+        <Link className="text-sm text-blue-300 underline hover:text-blue-200" href="/dashboard">
+          ← Back to dashboard
+        </Link>
+      </div>
+
+      {/* Billing currency banner */}
+      <div className="mb-6 rounded-lg border border-zinc-700 bg-zinc-900/50 p-3 text-sm">
+        Billing currency: <b>{currency}</b> (auto‑detected)
+      </div>
+
+      {/* Error banner */}
+      {err && (
+        <div className="mb-6 rounded-lg border border-red-700 bg-red-900/30 p-4 text-red-100">
+          <div className="font-semibold">We hit a snag</div>
+          <div className="text-sm opacity-90">{err}</div>
         </div>
+      )}
 
-        {/* Small note showing auto-detected currency; no dropdown */}
-        <div className="text-sm opacity-80">
-          Billing currency: <span className="font-medium">{currency}</span> (auto-detected)
-        </div>
+      {/* Plans */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        <PlanCard
+          title="Pro"
+          price={`${currency === "INR" ? "₹" : "$"}${price.pro}/mo`}
+          features={[
+            "Full analysis engine (OpenRouter)",
+            "Higher limits than Demo",
+            "Email support",
+          ]}
+          cta="Start subscription"
+          onClick={() => startCheckout("pro")}
+          button="bg-blue-600 hover:bg-blue-500"
+        />
 
-        {err && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-red-200">
-            <div className="font-semibold mb-1">We hit a snag</div>
-            <div className="text-sm">{err}</div>
-          </div>
-        )}
+        <PlanCard
+          title="Pro+"
+          price={`${currency === "INR" ? "₹" : "$"}${price.pro_plus}/mo`}
+          features={["Chat mode (limited context)", "Bigger daily caps", "Priority processing"]}
+          cta="Start Pro+"
+          onClick={() => startCheckout("pro_plus")}
+          button="bg-fuchsia-600 hover:bg-fuchsia-500"
+        />
 
-        {/* Plans */}
-        <div className="grid md:grid-cols-3 gap-4">
-          {/* Pro */}
-          <PlanCard
-            title="Pro"
-            price={`${fmt(price.pro, currency)}/mo`}
-            bullets={[
-              "Full analysis engine (OpenRouter)",
-              "Higher limits than Demo",
-              "Email support",
-            ]}
-            cta="Start subscription"
-            onClick={() => startCheckout("pro")}
-            loading={loading}
-            accent="sky"
-          />
+        <PlanCard
+          title="Premium"
+          price={`${currency === "INR" ? "₹" : "$"}${price.premium}/mo`}
+          features={["Premium Chat with file uploads", "Highest limits", "SLA & onboarding"]}
+          cta="Start Premium"
+          onClick={() => startCheckout("premium")}
+          button="bg-emerald-600 hover:bg-emerald-500"
+          highlight
+        />
+      </div>
 
-          {/* Pro+ */}
-          <PlanCard
-            title="Pro+"
-            price={`${fmt(price.pro_plus, currency)}/mo`}
-            bullets={[
-              "Chat mode (limited context)",
-              "Bigger daily caps",
-              "Priority processing",
-            ]}
-            cta="Start Pro+"
-            onClick={() => startCheckout("pro_plus")}
-            loading={loading}
-            accent="violet"
-          />
-
-          {/* Premium */}
-          <PlanCard
-            title="Premium"
-            price={`${fmt(price.premium, currency)}/mo`}
-            bullets={[
-              "Premium Chat with file uploads",
-              "Highest limits",
-              "SLA & onboarding",
-            ]}
-            cta="Start Premium"
-            onClick={() => startCheckout("premium")}
-            loading={loading}
-            accent="emerald"
-            highlight
-          />
-        </div>
-
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 text-sm opacity-85">
-          Payment questions?{" "}
+      <div className="mt-8">
+        <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-4 text-sm opacity-85">
+          Payment questions? {" "}
           <a className="underline text-blue-300 hover:text-blue-200" href="mailto:hello@caio.ai">
             Contact support
           </a>
@@ -260,46 +256,26 @@ export default function PaymentsPage() {
 function PlanCard(props: {
   title: string;
   price: string;
-  bullets: string[];
+  features: string[];
   cta: string;
   onClick: () => void;
-  loading?: boolean;
-  accent?: "sky" | "violet" | "emerald";
+  button: string;
   highlight?: boolean;
 }) {
-  const { title, price, bullets, cta, onClick, loading, accent = "sky", highlight = false } = props;
-
-  const ring =
-    accent === "emerald"
-      ? "ring-emerald-500/30"
-      : accent === "violet"
-      ? "ring-violet-500/30"
-      : "ring-sky-500/30";
-  const border =
-    accent === "emerald"
-      ? "border-emerald-500/30"
-      : accent === "violet"
-      ? "border-violet-500/30"
-      : "border-sky-500/30";
-  const button =
-    accent === "emerald"
-      ? "bg-emerald-600 hover:bg-emerald-500"
-      : accent === "violet"
-      ? "bg-violet-600 hover:bg-violet-500"
-      : "bg-sky-600 hover:bg-sky-500";
-
+  const { title, price, features, cta, onClick, button, highlight } = props;
   return (
     <div
-      className={`rounded-2xl border ${border} bg-zinc-900/60 p-5 shadow-lg ${highlight ? `ring-2 ${ring}` : ""}`}
+      className={`rounded-2xl border p-6 shadow-sm transition-colors ${
+        highlight
+          ? "border-emerald-400/40 bg-emerald-400/5"
+          : "border-zinc-700 bg-zinc-900/40 hover:bg-zinc-900/60"
+      }`}
     >
-      <div className="flex items-baseline justify-between">
-        <h3 className="text-lg font-semibold">{title}</h3>
-        <div className="text-xl font-bold">{price}</div>
-      </div>
-      <ul className="mt-3 space-y-2 text-sm opacity-90">
-        {bullets.map((b, i) => (
-          <li key={i} className="flex gap-2">
-            <span className="opacity-60">•</span>
+      <div className="mb-1 text-sm uppercase tracking-wide opacity-70">{title}</div>
+      <div className="mb-4 text-3xl font-bold">{price}</div>
+      <ul className="mb-4 list-disc space-y-1 pl-5 text-sm opacity-90">
+        {features.map((b, i) => (
+          <li key={i}>
             <span>{b}</span>
           </li>
         ))}
