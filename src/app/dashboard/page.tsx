@@ -11,7 +11,7 @@ const API_BASE =
   "https://caio-backend.onrender.com";
 const NETLIFY_HOME = "https://caioai.netlify.app";
 
-// ✅ include pro_plus on the dashboard
+/* ---------- Tiers ---------- */
 type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
 type Me = { email: string; is_admin: boolean; is_paid: boolean; created_at?: string; tier?: Tier };
 type Result =
@@ -40,8 +40,7 @@ function readTokenSafe(): string {
   }
 }
 
-/* ---------- Markdown helpers (spacing + parsing) ---------- */
-// 🔧 accept both `##` and `###` level headings from backend
+/* ---------- Markdown helpers ---------- */
 function normalizeAnalysis(md: string) {
   let s = (md ?? "").trim();
   s = s.replace(/\n(?=#{2,3}\s+)/g, "\n\n");
@@ -51,9 +50,8 @@ function normalizeAnalysis(md: string) {
   s = s.replace(/\n{3,}/g, "\n\n");
   return s;
 }
-type BrainParse = { name: string; insights?: string; recommendations?: string; };
+type BrainParse = { name: string; insights?: string; recommendations?: string };
 function parseBrains(md: string): BrainParse[] {
-  // 🔧 split at either `## <ROLE>` or `### <ROLE>`
   const sections = md
     .split(/\n(?=#{2,3}\s+[A-Z]{2,}.*$)/gm)
     .map((s) => s.trim())
@@ -77,23 +75,8 @@ function extractListItems(text: string): string[] {
   return parts.map((p) => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim()).filter(Boolean);
 }
 function sentences(text: string): string[] {
-  const clean = text
-    .replace(/^#+\s.*$/gm, " ")
-    .replace(/\n+/g, " ")
-    .replace(/\s{2,}/g, " ")
-    .trim();
+  const clean = text.replace(/^#+\s.*$/gm, " ").replace(/\n+/g, " ").replace(/\s{2,}/g, " ").trim();
   return clean.split(/(?<=[.!?])\s+(?=[A-Z(])/).filter((s) => s.length > 40);
-}
-function extractHeadingBlock(md: string, label: string): string {
-  const re = new RegExp(`#{2,3}\\s*${label}\\s*([\\s\\S]*?)(?=\\n#{2,3}\\s*\\w+|$)`, "ig");
-  let out = "";
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(md))) out += (out ? "\n\n" : "") + (m[1] || "");
-  return out.trim();
-}
-function textBeforeRecommendations(md: string): string {
-  const idx = md.search(/#{2,3}\s*Recommendations/i);
-  return idx >= 0 ? md.slice(0, idx) : md;
 }
 function InlineMD({ text }: { text: string }) {
   return (
@@ -114,9 +97,8 @@ function deriveOneActionFromInsights(insights?: string): string | null {
   if (/^\s*\*\*.+?\*\*\s*:/.test(first)) return first;
   return `**Priority Action**: ${first}`;
 }
-function looksLikeDemo(text: string) {
-  return /demo preview|upgrade to pro|brains used/i.test(text || "");
-}
+
+/* ---------- Demo synthesis (for nice preview) ---------- */
 function synthesizeFromContext(seedText: string, fileName?: string) {
   const src = `${seedText || ""} ${fileName || ""}`.toLowerCase();
   const hasRevenue = /(revenue|forecast|projection|budget|p&l|profit|invoice|cash\s?flow|collections|ds[o0])/i.test(src);
@@ -277,7 +259,7 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
     used?: number;
     limit?: number;
     remaining?: number;
-    reset_at?: string; // ISO string from backend
+    reset_at?: string;
     title?: string;
     message?: string;
   };
@@ -287,7 +269,7 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [friendlyErr, setFriendlyErr] = useState<string | null>(null);
-  const [limit, setLimit] = useState<LimitInfo | null>(null);   // NEW: daily cap banner
+  const [limit, setLimit] = useState<LimitInfo | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -339,7 +321,6 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
       let parsed: any = {};
       try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
 
-      // explicit 429 handling with banner
       if (res.status === 429) {
         setLimit({
           plan: parsed?.plan, used: parsed?.used, limit: parsed?.limit,
@@ -503,6 +484,7 @@ function GroupedReport({
 }) {
   const normalized = normalizeAnalysis(md);
 
+  /* ---- Demo preview (unchanged vibe) ---- */
   if (demo) {
     const { insight, cfo, chro } = synthesizeFromContext("", "");
     return (
@@ -519,6 +501,7 @@ function GroupedReport({
 
         <h4 className="text-base font-semibold opacity-90">Recommendations (preview)</h4>
 
+        {/* CFO */}
         <details className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
           <summary className="cursor-pointer text-lg font-medium select-none">CFO</summary>
           <ol className="mt-3 list-decimal pl-6 space-y-1">
@@ -527,6 +510,7 @@ function GroupedReport({
           </ol>
         </details>
 
+        {/* CHRO */}
         <details className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
           <summary className="cursor-pointer text-lg font-medium select-none">CHRO</summary>
           <ol className="mt-3 list-decimal pl-6 space-y-1">
@@ -535,6 +519,7 @@ function GroupedReport({
           </ol>
         </details>
 
+        {/* Locked banner for rest */}
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 opacity-75">
           <div className="flex items-center justify-between">
             <span className="text-lg font-medium">COO / CMO / CPO</span>
@@ -548,18 +533,23 @@ function GroupedReport({
     );
   }
 
-  // Parse brains (CFO/COO/CHRO/CMO/CPO) and aggregate top 5 collective
+  /* ---- Full (non-demo) rendering ---- */
   const brains = parseBrains(normalized);
+
+  // Build Collective Insights (top 5)
   const collective = (() => {
     const blocks = brains.map((b) => b.insights || "");
     const all: string[] = [];
     blocks.forEach((b) => extractListItems(b).forEach((x) => all.push(x)));
-    const counts = new Map<string, { c: number, text: string }>();
+    const counts = new Map<string, { c: number; text: string }>();
     for (const it of all) {
       const key = it.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
       counts.set(key, { c: (counts.get(key)?.c ?? 0) + 1, text: it });
     }
-    const ranked = [...counts.values()].sort((a, b) => b.c - a.c || b.text.length - a.text.length).map((x) => x.text);
+    const ranked = [...counts.values()]
+      .sort((a, b) => b.c - a.c || b.text.length - a.text.length)
+      .map((x) => x.text);
+
     if (ranked.length >= 5) return ranked.slice(0, 5);
 
     const unique: string[] = [];
@@ -594,33 +584,59 @@ function GroupedReport({
 
       <div className="space-y-3">
         <h4 className="text-base font-semibold opacity-90">Recommendations</h4>
+
+        {/* map each CXO section; lock CHRO/CMO/CPO, show COO bullets */}
         {brains.map((b, i) => {
+          const role = (b.name || "").toUpperCase();
+          const isLocked = role === "COO" || role === "CMO" || role === "CPO";
           const insightFirst = deriveOneActionFromInsights(b.insights);
           const top3 = extractListItems(b.recommendations || "").slice(0, 3);
+
           return (
             <details key={i} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
               <summary className="cursor-pointer text-lg font-medium select-none">{b.name}</summary>
-              {insightFirst && (
-                <div className="mt-2 text-sm opacity-90">
-                  <InlineMD text={insightFirst} />
-                </div>
-              )}
-              <ol className="mt-3 list-decimal pl-6 space-y-1">
-                {top3.map((it, j) => (<li key={j} className="leading-7"><InlineMD text={it} /></li>))}
-              </ol>
 
-              {/* Upsell block under each CXO when not on Pro+/Premium */}
-              {showUpsell && (
-                <div className="mt-3 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
-                  <div className="mb-1 font-semibold">Unlock more for {b.name}</div>
+              {isLocked ? (
+                /* Fully locked placeholder (no bullets) */
+                <div className="mt-2 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
+                  <div className="font-semibold mb-1">{role} insights are locked</div>
                   <div className="opacity-90">
-                    For more insights, upgrade to <b>Pro</b> — or if you want to chat, go for <b>Pro+</b> or <b>Premium</b>.
+                    Upgrade to <b>Pro</b> to view {role}’s recommendations. If you want chat, go for <b>Pro+</b> or <b>Premium</b>.
                   </div>
                   <div className="mt-2 flex gap-2">
                     <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
                     <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
                   </div>
                 </div>
+              ) : (
+                /* CHRO (and CFO if present in stream) -> show bullets + upsell */
+                <>
+                  {insightFirst && (
+                    <div className="mt-2 text-sm opacity-90">
+                      <InlineMD text={insightFirst} />
+                    </div>
+                  )}
+                  {top3.length > 0 && (
+                    <ol className="mt-3 list-decimal pl-6 space-y-1">
+                      {top3.map((it, j) => (
+                        <li key={j} className="leading-7"><InlineMD text={it} /></li>
+                      ))}
+                    </ol>
+                  )}
+
+                  {showUpsell && (
+                    <div className="mt-3 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
+                      <div className="mb-1 font-semibold">Unlock more for {b.name}</div>
+                      <div className="opacity-90">
+                        For more insights, upgrade to <b>Pro</b> — or if you want to chat, go for <b>Pro+</b> or <b>Premium</b>.
+                      </div>
+                      <div className="mt-2 flex gap-2">
+                        <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
+                        <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </details>
           );
