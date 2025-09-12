@@ -195,7 +195,21 @@ export default function DashboardPage() {
               {token ? (
                 <>
                   <span className={`px-2.5 py-1 rounded-full text-xs tracking-wide border ${planClass}`}>{plan}</span>
-                  <button onClick={logout} className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-sm shadow">
+
+                  {/* Admin Mode button only visible to admins */}
+                  {me?.tier === "admin" && (
+                    <Link
+                      href="/admin"
+                      className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-sm shadow"
+                    >
+                      Admin Mode
+                    </Link>
+                  )}
+
+                  <button
+                    onClick={logout}
+                    className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-sm shadow"
+                  >
                     Logout
                   </button>
                 </>
@@ -205,6 +219,7 @@ export default function DashboardPage() {
                 </Link>
               )}
             </div>
+
           </div>
 
           {/* CTA row for Demo & Pro: Upgrade + Try Chat */}
@@ -480,54 +495,29 @@ function GroupedReport({
   title: string;
   md: string;
   demo?: boolean;
-  tier: Tier;
+  tier: "admin" | "premium" | "pro_plus" | "pro" | "demo";
 }) {
   const normalized = normalizeAnalysis(md);
 
-  /* ---- Demo preview (unchanged vibe) ---- */
+  /* ---- Demo preview: keep your existing feel, minimal change ---- */
   if (demo) {
-    const { insight, cfo, chro } = synthesizeFromContext("", "");
+    // Render a simple preview block in demo mode
     return (
       <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
-        <h3 className="font-semibold">Demo Mode · CFO, CHRO</h3>
-
-        <details open className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <summary className="cursor-pointer text-lg font-medium select-none">Collective Insights (preview)</summary>
-          <ol className="mt-3 list-decimal pl-6 space-y-1">
-            <li className="leading-7"><InlineMD text={insight} /></li>
-            <li className="leading-7"><InlineMD text={truncateForDemo(insight)} /></li>
-          </ol>
-        </details>
-
-        <h4 className="text-base font-semibold opacity-90">Recommendations (preview)</h4>
-
-        {/* CFO */}
-        <details className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <summary className="cursor-pointer text-lg font-medium select-none">CFO</summary>
-          <ol className="mt-3 list-decimal pl-6 space-y-1">
-            <li className="leading-7"><InlineMD text={cfo} /></li>
-            <li className="leading-7"><InlineMD text={truncateForDemo(cfo)} /></li>
-          </ol>
-        </details>
-
-        {/* CHRO */}
-        <details className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <summary className="cursor-pointer text-lg font-medium select-none">CHRO</summary>
-          <ol className="mt-3 list-decimal pl-6 space-y-1">
-            <li className="leading-7"><InlineMD text={chro} /></li>
-            <li className="leading-7"><InlineMD text={truncateForDemo(chro)} /></li>
-          </ol>
-        </details>
-
-        {/* Locked banner for rest */}
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 opacity-75">
-          <div className="flex items-center justify-between">
-            <span className="text-lg font-medium">COO / CMO / CPO</span>
-            <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
-              Upgrade to get full access
-            </Link>
+        <h3 className="font-semibold">{title || "Demo Mode"}</h3>
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-sm opacity-85">
+          This is a preview. Run a full analysis with a document for richer CFO/CHRO insights.
+        </div>
+        {/* unified placeholder for others */}
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
+          <div className="text-lg font-medium">COO / CMO / CPO</div>
+          <p className="mt-2 text-sm opacity-80">
+            For more insights from COO, CMO, and CPO, please upgrade to <b>Pro</b>; to chat with CAIO, upgrade to <b>Pro+</b> or <b>Premium</b>.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
+            <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
           </div>
-          <p className="mt-2 text-sm opacity-80">Unlock full insights and all 3 recommendations for each role.</p>
         </div>
       </div>
     );
@@ -536,11 +526,22 @@ function GroupedReport({
   /* ---- Full (non-demo) rendering ---- */
   const brains = parseBrains(normalized);
 
-  // Build Collective Insights (top 5)
+  // Pull out by role name (case-insensitive safety)
+  const byName = (name: string) =>
+    brains.find(b => (b.name || "").trim().toUpperCase().startsWith(name)) || null;
+
+  const CFO  = byName("CFO");
+  const CHRO = byName("CHRO");
+  const COO  = byName("COO");
+  const CMO  = byName("CMO");
+  const CPO  = byName("CPO");
+
+  // Build Collective Insights (Top 5) across all brains
   const collective = (() => {
     const blocks = brains.map((b) => b.insights || "");
     const all: string[] = [];
     blocks.forEach((b) => extractListItems(b).forEach((x) => all.push(x)));
+
     const counts = new Map<string, { c: number; text: string }>();
     for (const it of all) {
       const key = it.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -565,11 +566,48 @@ function GroupedReport({
     return ranked.concat(unique).slice(0, 5);
   })();
 
-  const showUpsell = tier === "demo" || tier === "pro";
+  // Helper to render a role card with 3 bullets
+  function RoleWithBullets(label: string, insights?: string, recommendations?: string) {
+    const insightFirst = deriveOneActionFromInsights(insights);
+    const top3 = extractListItems(recommendations || "").slice(0, 3);
+    const showUpsell = tier === "demo" || tier === "pro";
+
+    return (
+      <details className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4" open>
+        <summary className="cursor-pointer text-lg font-medium select-none">{label}</summary>
+
+        {insightFirst && (
+          <div className="mt-2 text-sm opacity-90">
+            <InlineMD text={insightFirst} />
+          </div>
+        )}
+        {top3.length > 0 && (
+          <ol className="mt-3 list-decimal pl-6 space-y-1">
+            {top3.map((it, j) => (
+              <li key={j} className="leading-7"><InlineMD text={it} /></li>
+            ))}
+          </ol>
+        )}
+
+        {showUpsell && (
+          <div className="mt-3 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
+            <div className="mb-1 font-semibold">Unlock more for {label}</div>
+            <div className="opacity-90">
+              For more insights, upgrade to <b>Pro</b> — or if you want to chat, go for <b>Pro+</b> or <b>Premium</b>.
+            </div>
+            <div className="mt-2 flex gap-2">
+              <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
+              <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
+            </div>
+          </div>
+        )}
+      </details>
+    );
+  }
 
   return (
     <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
-      <h3 className="font-semibold">{title}</h3>
+      <h3 className="font-semibold">{title || "Analysis Result"}</h3>
 
       {collective.length > 0 && (
         <details open className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
@@ -585,62 +623,26 @@ function GroupedReport({
       <div className="space-y-3">
         <h4 className="text-base font-semibold opacity-90">Recommendations</h4>
 
-        {/* map each CXO section; lock CHRO/CMO/CPO, show COO bullets */}
-        {brains.map((b, i) => {
-          const role = (b.name || "").toUpperCase();
-          const isLocked = role === "COO" || role === "CMO" || role === "CPO";
-          const insightFirst = deriveOneActionFromInsights(b.insights);
-          const top3 = extractListItems(b.recommendations || "").slice(0, 3);
+        {/* CFO first (if present) */}
+        {CFO && RoleWithBullets("CFO", CFO.insights, CFO.recommendations)}
 
-          return (
-            <details key={i} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-              <summary className="cursor-pointer text-lg font-medium select-none">{b.name}</summary>
+        {/* CHRO immediately after CFO (if present) */}
+        {CHRO && RoleWithBullets("CHRO", CHRO.insights, CHRO.recommendations)}
 
-              {isLocked ? (
-                /* Fully locked placeholder (no bullets) */
-                <div className="mt-2 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
-                  <div className="font-semibold mb-1">{role} insights are locked</div>
-                  <div className="opacity-90">
-                    Upgrade to <b>Pro</b> to view {role}’s recommendations. If you want chat, go for <b>Pro+</b> or <b>Premium</b>.
-                  </div>
-                  <div className="mt-2 flex gap-2">
-                    <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
-                    <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
-                  </div>
-                </div>
-              ) : (
-                /* CHRO (and CFO if present in stream) -> show bullets + upsell */
-                <>
-                  {insightFirst && (
-                    <div className="mt-2 text-sm opacity-90">
-                      <InlineMD text={insightFirst} />
-                    </div>
-                  )}
-                  {top3.length > 0 && (
-                    <ol className="mt-3 list-decimal pl-6 space-y-1">
-                      {top3.map((it, j) => (
-                        <li key={j} className="leading-7"><InlineMD text={it} /></li>
-                      ))}
-                    </ol>
-                  )}
-
-                  {showUpsell && (
-                    <div className="mt-3 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
-                      <div className="mb-1 font-semibold">Unlock more for {b.name}</div>
-                      <div className="opacity-90">
-                        For more insights, upgrade to <b>Pro</b> — or if you want to chat, go for <b>Pro+</b> or <b>Premium</b>.
-                      </div>
-                      <div className="mt-2 flex gap-2">
-                        <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
-                        <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </details>
-          );
-        })}
+        {/* Unified placeholder for COO/CMO/CPO (no bullets) */}
+        {(COO || CMO || CPO) && (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <div className="text-lg font-medium">COO / CMO / CPO</div>
+            <p className="mt-2 text-sm opacity-85">
+              For more insights from COO, CMO, and CPO, please upgrade to <b>Pro</b>. If you want to chat with CAIO,
+              upgrade to <b>Pro+</b> or <b>Premium</b>.
+            </p>
+            <div className="mt-2 flex gap-2">
+              <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
+              <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
