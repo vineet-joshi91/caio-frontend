@@ -8,6 +8,48 @@ const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-backend.onrender.com";
 
+/* Small helpers */
+function withTimeout<T>(p: Promise<T>, ms = 10000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`timeout/${ms}ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); }
+    );
+  });
+}
+
+async function warmBackend(): Promise<void> {
+  try {
+    await withTimeout(fetch(`${API_BASE}/api/ready`, { cache: "no-store" }), 6000);
+  } catch {
+    // ignore; we'll still try signup and handle retries
+  }
+}
+
+async function postJsonWithRetry(url: string, body: any, tries = 2): Promise<Response> {
+  let lastErr: any = null;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await withTimeout(
+        fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          credentials: "include",
+        }),
+        15000
+      );
+      return res;
+    } catch (e: any) {
+      lastErr = e;
+      // network/cold-start: brief backoff then retry
+      await new Promise((r) => setTimeout(r, 1200 * (i + 1)));
+    }
+  }
+  throw lastErr || new Error("network");
+}
+
 export default function SignupPage() {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -16,16 +58,16 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
 
   function saveToken(t?: string) {
-    try {
-      if (t) localStorage.setItem("access_token", t);
-    } catch {}
+    try { if (t) localStorage.setItem("access_token", t); } catch {}
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+    setHint(null);
 
     if (!email.trim() || !password.trim()) {
       setErr("Please enter email and password.");
@@ -34,34 +76,33 @@ export default function SignupPage() {
 
     setBusy(true);
     try {
-      const res = await fetch(`${API_BASE}/api/signup`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          organization: organization.trim(),
-          email: email.trim(),
-          password,
-        }),
-        credentials: "include",
-      });
+      setHint("Warming server…");
+      await warmBackend();
+
+      setHint(null); // clear if warmup succeeded
+      const res = await postJsonWithRetry(`${API_BASE}/api/signup`, {
+        name: name.trim(),
+        organization: organization.trim() || organization.trim(), // accept either label
+        email: email.trim(),
+        password,
+      }, 2);
 
       const text = await res.text();
       let j: any = {};
       try { j = text ? JSON.parse(text) : {}; } catch {}
 
       if (!res.ok) {
-        const msg =
-          j?.detail || j?.message || text || "Could not create your account.";
+        const msg = j?.detail || j?.message || text || `Signup failed (HTTP ${res.status}).`;
         setErr(String(msg));
         return;
       }
 
-      // success: store token and go to dashboard
       saveToken(j?.access_token);
       router.replace("/dashboard");
     } catch (e: any) {
-      setErr(e?.message || "Network error. Please try again.");
+      // This is the previous “Failed to fetch” case — show a clearer message.
+      setErr("Server is waking up or unreachable. Please try again in a few seconds.");
+      setHint("Tip: If it persists, check NEXT_PUBLIC_API_BASE and CORS allowlist.");
     } finally {
       setBusy(false);
     }
@@ -69,10 +110,7 @@ export default function SignupPage() {
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-100 p-6">
-      <form
-        onSubmit={onSubmit}
-        className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl"
-      >
+      <form onSubmit={onSubmit} className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl">
         <h1 className="text-xl font-semibold">Create your account</h1>
 
         <label className="mt-4 block text-sm opacity-85">Name</label>
@@ -113,6 +151,9 @@ export default function SignupPage() {
           <div className="mt-3 rounded-md border border-red-700 bg-red-900/30 p-2 text-sm text-red-200">
             {err}
           </div>
+        )}
+        {hint && (
+          <div className="mt-2 text-xs opacity-70">{hint}</div>
         )}
 
         <button
