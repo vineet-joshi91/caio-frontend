@@ -1,158 +1,135 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-backend.onrender.com";
 
-type FastAPIError =
-  | { detail?: string }
-  | { detail?: Array<{ msg?: string; loc?: (string | number)[]; type?: string }> };
-
 export default function SignupPage() {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [org, setOrg] = useState("");
+  const [organization, setOrganization] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  function clearAuthClient() {
+  function saveToken(t?: string) {
     try {
-      localStorage.removeItem("access_token");
-      localStorage.removeItem("token");
+      if (t) localStorage.setItem("access_token", t);
     } catch {}
-    document.cookie = "token=; Path=/; Max-Age=0; SameSite=Lax";
-  }
-  async function backendLogout() {
-    try { await fetch(`${API_BASE}/api/logout`, { method: "POST", credentials: "include" }); } catch {}
-    try { await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" }); } catch {}
-  }
-  function saveToken(token: string) {
-    document.cookie = `token=${encodeURIComponent(token)}; Path=/; Max-Age=2592000; SameSite=Lax`;
-    try {
-      localStorage.setItem("access_token", token);
-      localStorage.setItem("token", token);
-    } catch {}
-  }
-
-  // CRITICAL: ensure signup always starts *anonymous*
-  useEffect(() => { (async () => { await backendLogout(); clearAuthClient(); })(); }, []);
-
-  function extractError(e: any): string {
-    try {
-      if (!e) return "Something went wrong";
-      if (typeof e === "string") return e;
-      if (e.detail) {
-        if (typeof e.detail === "string") return e.detail;
-        if (Array.isArray(e.detail)) {
-          return (
-            e.detail
-              .map((d: any) => {
-                const where = Array.isArray(d?.loc) ? d.loc.join(".") : "";
-                return d?.msg ? `${where}: ${d.msg}` : where;
-              })
-              .filter(Boolean)
-              .join("; ") || "Validation error"
-          );
-        }
-      }
-      return "Unexpected error";
-    } catch {
-      return "Unexpected error";
-    }
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setErr(null); setLoading(true);
+    setErr(null);
 
+    if (!email.trim() || !password.trim()) {
+      setErr("Please enter email and password.");
+      return;
+    }
+
+    setBusy(true);
     try {
-      // Your backend doesn’t support POST /api/signup (405), so we reuse /api/login
-      // for “create+login” with JSON payload (as in your current code).
       const res = await fetch(`${API_BASE}/api/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-          username: email.trim(),
-          password: password,
+        body: JSON.stringify({
           name: name.trim(),
-          org: org.trim(),
-          source: "signup",
+          organization: organization.trim(),
+          email: email.trim(),
+          password,
         }),
+        credentials: "include",
       });
 
+      const text = await res.text();
+      let j: any = {};
+      try { j = text ? JSON.parse(text) : {}; } catch {}
+
       if (!res.ok) {
-        let msg = `Sign up failed (${res.status})`;
-        try { msg = extractError(await res.json()); } catch {}
-        throw new Error(msg);
+        const msg =
+          j?.detail || j?.message || text || "Could not create your account.";
+        setErr(String(msg));
+        return;
       }
 
-      const data = await res.json();
-      const token = data.access_token || data.token || "";
-      if (!token) throw new Error("No token returned from server");
-
-      saveToken(token);
-      router.push("/dashboard");
+      // success: store token and go to dashboard
+      saveToken(j?.access_token);
+      router.replace("/dashboard");
     } catch (e: any) {
-      setErr(e.message || "Something went wrong");
+      setErr(e?.message || "Network error. Please try again.");
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <form onSubmit={onSubmit}
-            className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6 space-y-4">
+    <main className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-100 p-6">
+      <form
+        onSubmit={onSubmit}
+        className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl"
+      >
         <h1 className="text-xl font-semibold">Create your account</h1>
 
-        <div className="space-y-1">
-          <label className="text-sm text-zinc-400">Name</label>
-          <input className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 outline-none focus:border-zinc-500"
-                 value={name} onChange={e => setName(e.target.value)} placeholder="Jane Doe" required />
-        </div>
+        <label className="mt-4 block text-sm opacity-85">Name</label>
+        <input
+          className="mt-1 w-full rounded-lg border border-zinc-800 bg-zinc-950/60 p-2"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Jane Doe"
+        />
 
-        <div className="space-y-1">
-          <label className="text-sm text-zinc-400">Organisation</label>
-          <input className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 outline-none focus:border-zinc-500"
-                 value={org} onChange={e => setOrg(e.target.value)} placeholder="Acme Inc." />
-        </div>
+        <label className="mt-4 block text-sm opacity-85">Organisation</label>
+        <input
+          className="mt-1 w-full rounded-lg border border-zinc-800 bg-zinc-950/60 p-2"
+          value={organization}
+          onChange={(e) => setOrganization(e.target.value)}
+          placeholder="Acme Corp"
+        />
 
-        <div className="space-y-1">
-          <label className="text-sm text-zinc-400">Work email</label>
-          <input type="email"
-                 className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 outline-none focus:border-zinc-500"
-                 value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com"
-                 required autoComplete="email" />
-        </div>
+        <label className="mt-4 block text-sm opacity-85">Work email</label>
+        <input
+          type="email"
+          className="mt-1 w-full rounded-lg border border-zinc-800 bg-zinc-950/60 p-2"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@company.com"
+        />
 
-        <div className="space-y-1">
-          <label className="text-sm text-zinc-400">Password</label>
-          <input type="password"
-                 className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 outline-none focus:border-zinc-500"
-                 value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"
-                 required autoComplete="new-password" />
-        </div>
+        <label className="mt-4 block text-sm opacity-85">Password</label>
+        <input
+          type="password"
+          className="mt-1 w-full rounded-lg border border-zinc-800 bg-zinc-950/60 p-2"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="••••••••"
+        />
 
         {err && (
-          <div className="text-sm text-red-300 rounded-lg border border-red-800 bg-red-900/30 px-3 py-2 whitespace-pre-wrap">
+          <div className="mt-3 rounded-md border border-red-700 bg-red-900/30 p-2 text-sm text-red-200">
             {err}
           </div>
         )}
 
-        <button type="submit" disabled={loading}
-                className="w-full rounded-lg py-2 font-medium bg-gradient-to-r from-sky-500 to-emerald-500 text-white disabled:opacity-60">
-          {loading ? "Creating..." : "Sign up"}
+        <button
+          type="submit"
+          disabled={busy}
+          className="mt-4 w-full rounded-lg bg-emerald-600 py-2 font-medium hover:bg-emerald-500 disabled:opacity-60"
+        >
+          {busy ? "Signing up…" : "Sign up"}
         </button>
 
-        <p className="text-xs text-zinc-500">
-          Already have an account? <a className="underline" href="/login">Log in</a>
-        </p>
+        <div className="mt-3 text-sm opacity-80">
+          Already have an account?{" "}
+          <Link href="/login" className="underline text-blue-300 hover:text-blue-200">
+            Log in
+          </Link>
+        </div>
       </form>
-    </div>
+    </main>
   );
 }
