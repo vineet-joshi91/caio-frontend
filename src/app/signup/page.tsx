@@ -73,11 +73,10 @@ export default function SignupPage() {
     try {
       // Your backend doesn’t support POST /api/signup (405), so we reuse /api/login
       // for “create+login” with JSON payload (as in your current code).
-      const res = await fetch(`${API_BASE}/api/login`, {
+      const res = await fetch(`${API_BASE}/api/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
+          body: JSON.stringify({
           username: email.trim(),
           password: password,
           name: name.trim(),
