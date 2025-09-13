@@ -18,9 +18,9 @@ export default function AnalyzeResult({
   onUpgrade?: () => void;
 }) {
   const sections = useMemo(() => splitByCxo(summary), [summary]);
-  const isLocked = tier === "demo" || tier === "pro"; // Pro has Analyze; full chat is Pro+/Premium
+  const isLocked = tier === "demo" || tier === "pro"; // Pro has Analyze; chat is Pro+/Premium
 
-  // Order with CHRO directly after CFO
+  // Force the display order so CHRO appears right after CFO
   const roleOrder = ["CFO", "CHRO", "COO", "CMO", "CPO"] as const;
 
   return (
@@ -66,9 +66,8 @@ export default function AnalyzeResult({
 /* ---------------- helpers ---------------- */
 
 function splitByCxo(src: string) {
-  // Extract top sections if present
-  // We accept headings like "## Collective Insights" / "## Recommendations"
-  // and capture CXO blocks "## CFO", "## COO", "## CHRO", "## CMO", "## CPO"
+  // Accept "## Collective Insights" / "## Recommendations"
+  // and CXO blocks: "## CFO", "## COO", "## CHRO", "## CMO", "## CPO"
   const lines = (src || "").split(/\r?\n/);
 
   const join = (arr: string[]) => arr.join("\n").trim();
@@ -123,12 +122,12 @@ function splitByCxo(src: string) {
     (k) => (out.cxo[k] = join(buckets[k]))
   );
 
-  // If CHRO content is missing but CFO exists, mirror CFO into CHRO (requested fallback)
+  // ✅ If CHRO is missing but CFO exists, mirror CFO into CHRO
   if (!out.cxo.CHRO && out.cxo.CFO) {
     out.cxo.CHRO = out.cxo.CFO;
   }
 
-  // Fallback: if there were no headings at all, show everything in one block under "Collective"
+  // Fallback: no headings at all → show everything under "Collective"
   if (!out.collective && !out.reco && Object.values(out.cxo).every((v) => !v)) {
     out.collective = (src || "").trim();
   }
@@ -157,8 +156,6 @@ function Accordion({
 }
 
 function MarkdownBlock({ markdown }: { markdown: string }) {
-  // Keep it simple: paragraphs + lists + bold/italics + headings already provided by the LLM
-  // If you already use a markdown renderer, swap this for that.
   return <pre className="whitespace-pre-wrap break-words">{markdown}</pre>;
 }
 
@@ -190,7 +187,7 @@ function Upsell({
         >
           Upgrade
         </a>
-        {/* Plain anchor to Premium Chat to avoid router/no-op issues */}
+        {/* plain anchor so it always works */}
         <a
           href="/premium/chat"
           className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800"
