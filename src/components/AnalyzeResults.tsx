@@ -18,7 +18,10 @@ export default function AnalyzeResult({
   onUpgrade?: () => void;
 }) {
   const sections = useMemo(() => splitByCxo(summary), [summary]);
-  const isLocked = tier === "demo" || tier === "pro"; // Pro has Analyze, but full CXO chat lives in Pro+/Premium
+  const isLocked = tier === "demo" || tier === "pro"; // Pro has Analyze; full chat is Pro+/Premium
+
+  // Order with CHRO directly after CFO
+  const roleOrder = ["CFO", "CHRO", "COO", "CMO", "CPO"] as const;
 
   return (
     <div className="space-y-6">
@@ -35,7 +38,7 @@ export default function AnalyzeResult({
       )}
 
       {/* CXO-wise breakdown */}
-      {(["CFO", "COO", "CHRO", "CMO", "CPO"] as const).map((role) => {
+      {roleOrder.map((role) => {
         const content = sections.cxo[role];
         if (!content) return null;
         return (
@@ -64,7 +67,7 @@ export default function AnalyzeResult({
 
 function splitByCxo(src: string) {
   // Extract top sections if present
-  // We accept either headings like "## Collective Insights" / "## Recommendations"
+  // We accept headings like "## Collective Insights" / "## Recommendations"
   // and capture CXO blocks "## CFO", "## COO", "## CHRO", "## CMO", "## CPO"
   const lines = (src || "").split(/\r?\n/);
 
@@ -72,7 +75,10 @@ function splitByCxo(src: string) {
   const out = {
     collective: "",
     reco: "",
-    cxo: { CFO: "", COO: "", CHRO: "", CMO: "", CPO: "" } as Record<"CFO" | "COO" | "CHRO" | "CMO" | "CPO", string>,
+    cxo: { CFO: "", COO: "", CHRO: "", CMO: "", CPO: "" } as Record<
+      "CFO" | "COO" | "CHRO" | "CMO" | "CPO",
+      string
+    >,
   };
 
   let current: string | null = null;
@@ -113,7 +119,14 @@ function splitByCxo(src: string) {
 
   out.collective = join(buckets.collective);
   out.reco = join(buckets.reco);
-  (["CFO", "COO", "CHRO", "CMO", "CPO"] as const).forEach((k) => (out.cxo[k] = join(buckets[k])));
+  (["CFO", "COO", "CHRO", "CMO", "CPO"] as const).forEach(
+    (k) => (out.cxo[k] = join(buckets[k]))
+  );
+
+  // If CHRO content is missing but CFO exists, mirror CFO into CHRO (requested fallback)
+  if (!out.cxo.CHRO && out.cxo.CFO) {
+    out.cxo.CHRO = out.cxo.CFO;
+  }
 
   // Fallback: if there were no headings at all, show everything in one block under "Collective"
   if (!out.collective && !out.reco && Object.values(out.cxo).every((v) => !v)) {
@@ -135,7 +148,9 @@ function Accordion({
 }) {
   return (
     <details className="rounded-lg border border-zinc-700 bg-zinc-900/40 p-4" open={defaultOpen}>
-      <summary className="cursor-pointer select-none text-sm font-semibold opacity-90">{title}</summary>
+      <summary className="cursor-pointer select-none text-sm font-semibold opacity-90">
+        {title}
+      </summary>
       <div className="prose prose-invert mt-3 max-w-none text-sm leading-6">{children}</div>
     </details>
   );
@@ -175,7 +190,11 @@ function Upsell({
         >
           Upgrade
         </a>
-        <a href="/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">
+        {/* Plain anchor to Premium Chat to avoid router/no-op issues */}
+        <a
+          href="/premium/chat"
+          className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800"
+        >
           Try Chat
         </a>
       </div>
