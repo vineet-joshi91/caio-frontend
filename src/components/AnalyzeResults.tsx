@@ -4,7 +4,7 @@ import { useMemo } from "react";
 
 /**
  * Props:
- *  - summary: markdown-ish string from /api/analyze (contains "## CFO", "## COO", etc.)
+ *  - summary: markdown-ish string from /api/analyze
  *  - tier: "demo" | "pro" | "premium" | "admin"
  *  - onUpgrade?: optional handler for upgrade click
  */
@@ -18,14 +18,13 @@ export default function AnalyzeResult({
   onUpgrade?: () => void;
 }) {
   const sections = useMemo(() => splitByCxo(summary), [summary]);
-  const isLocked = tier === "demo" || tier === "pro"; // Pro has Analyze; chat is Pro+/Premium
+  const isLocked = tier === "demo" || tier === "pro"; // chat is Pro+/Premium
 
-  // Force the display order so CHRO appears right after CFO
+  // Force CHRO directly under CFO
   const roleOrder = ["CFO", "CHRO", "COO", "CMO", "CPO"] as const;
 
   return (
     <div className="space-y-6">
-      {/* Collective Insights / Recos (if present) */}
       {!!sections.collective && (
         <Accordion title="Collective Insights (Top 5)" defaultOpen>
           <MarkdownBlock markdown={sections.collective} />
@@ -37,7 +36,6 @@ export default function AnalyzeResult({
         </Accordion>
       )}
 
-      {/* CXO-wise breakdown */}
       {roleOrder.map((role) => {
         const content = sections.cxo[role];
         if (!content) return null;
@@ -66,9 +64,8 @@ export default function AnalyzeResult({
 /* ---------------- helpers ---------------- */
 
 function splitByCxo(src: string) {
-  // Accept "## Collective Insights" / "## Recommendations"
-  // and CXO blocks: "## CFO", "## COO", "## CHRO", "## CMO", "## CPO"
-  const lines = (src || "").split(/\r?\n/);
+  const text = (src || "").replace(/\r/g, "");
+  const lines = text.split("\n");
 
   const join = (arr: string[]) => arr.join("\n").trim();
   const out = {
@@ -79,6 +76,15 @@ function splitByCxo(src: string) {
       string
     >,
   };
+
+  // More permissive heading matchers
+  const isCollective = (s: string) =>
+    /^#{1,6}\s*collective insights\b/i.test(s) || /^\*\*?\s*collective insights\s*\*?\*?:?\s*$/i.test(s.trim());
+  const isReco = (s: string) =>
+    /^#{1,6}\s*recommendations\b/i.test(s) || /^\*\*?\s*recommendations\s*\*?\*?:?\s*$/i.test(s.trim());
+
+  const cxoMatcher =
+    /^(?:#{1,6}\s*)?(?:\*\*)?(CFO|COO|CHRO|CMO|CPO)(?:\*\*)?\s*:?\s*$/i; // accepts "## CHRO", "**CHRO**:", "CHRO", etc.
 
   let current: string | null = null;
   const buckets: Record<string, string[]> = {
@@ -94,23 +100,21 @@ function splitByCxo(src: string) {
   for (const raw of lines) {
     const h = raw.trim();
 
-    // Headings we recognise
-    if (/^##\s+collective insights/i.test(h)) {
+    if (isCollective(h)) {
       current = "collective";
       continue;
     }
-    if (/^##\s+recommendations/i.test(h)) {
+    if (isReco(h)) {
       current = "reco";
       continue;
     }
 
-    const m = /^##\s+(CFO|COO|CHRO|CMO|CPO)\b/i.exec(h);
+    const m = cxoMatcher.exec(h);
     if (m) {
       current = m[1].toUpperCase();
       continue;
     }
 
-    // Accumulate
     if (current && buckets[current]) {
       buckets[current].push(raw);
     }
@@ -122,14 +126,14 @@ function splitByCxo(src: string) {
     (k) => (out.cxo[k] = join(buckets[k]))
   );
 
-  // ✅ If CHRO is missing but CFO exists, mirror CFO into CHRO
+  // ✅ If CHRO missing but CFO exists, mirror CFO to CHRO
   if (!out.cxo.CHRO && out.cxo.CFO) {
     out.cxo.CHRO = out.cxo.CFO;
   }
 
-  // Fallback: no headings at all → show everything under "Collective"
+  // Fallback: no headings caught at all → show everything as one block
   if (!out.collective && !out.reco && Object.values(out.cxo).every((v) => !v)) {
-    out.collective = (src || "").trim();
+    out.collective = text.trim();
   }
   return out;
 }
@@ -147,9 +151,7 @@ function Accordion({
 }) {
   return (
     <details className="rounded-lg border border-zinc-700 bg-zinc-900/40 p-4" open={defaultOpen}>
-      <summary className="cursor-pointer select-none text-sm font-semibold opacity-90">
-        {title}
-      </summary>
+      <summary className="cursor-pointer select-none text-sm font-semibold opacity-90">{title}</summary>
       <div className="prose prose-invert mt-3 max-w-none text-sm leading-6">{children}</div>
     </details>
   );
