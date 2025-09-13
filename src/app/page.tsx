@@ -1,36 +1,37 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
-import { fetchWithAuth, routeForTier, type Tier } from "../lib/auth";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-export default function RootRedirector() {
+export default function Root() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [busy, setBusy] = useState(true);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetchWithAuth("/api/profile");
-        if (res.ok) {
-          const j: any = await res.json();
-          const next = routeForTier((j?.tier as Tier) || "demo");
-          if (pathname !== next) router.replace(next);
-        } else {
-          if (pathname !== "/login") router.replace("/login");
+    let dest = "/login";
+    try {
+      const token =
+        (typeof window !== "undefined" && (localStorage.getItem("access_token") || localStorage.getItem("token"))) ||
+        "";
+      dest = token ? "/dashboard" : "/login";
+
+      // Try client-side navigation first
+      router.replace(dest);
+
+      // Hard fallback in case Router is unhappy
+      const id = setTimeout(() => {
+        if (window.location.pathname !== dest) {
+          window.location.href = dest;
         }
-      } catch {
-        if (pathname !== "/login") router.replace("/login");
-      } finally {
-        setBusy(false);
-      }
-    })();
-  }, [router, pathname]);
+      }, 400);
+      return () => clearTimeout(id);
+    } catch {
+      window.location.href = "/login";
+    }
+  }, [router]);
 
   return (
-    <main className="min-h-screen bg-black text-white flex items-center justify-center">
-      <div className="opacity-70">{busy ? "Redirecting…" : "Loading…"}</div>
+    <main className="min-h-screen bg-black text-white grid place-items-center">
+      <span className="opacity-70">Redirecting…</span>
     </main>
   );
 }
