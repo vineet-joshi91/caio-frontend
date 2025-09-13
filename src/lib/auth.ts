@@ -1,30 +1,44 @@
 // src/lib/auth.ts
-// Production-safe helpers for auth storage + retrieval.
-// Uses both cookie (for middleware/SSR) and localStorage (client convenience).
-
-export function setAuthToken(token: string) {
-  try {
-    localStorage.setItem("token", token);
-  } catch {}
-  // 1 day; adjust as you like
-  document.cookie = `token=${encodeURIComponent(token)}; Path=/; Max-Age=86400; SameSite=Lax`;
+export function getApiBase(): string {
+  const env = process.env.NEXT_PUBLIC_API_BASE || "";
+  return env.replace(/\/+$/, "");
 }
 
-export function getAuthToken(): string | null {
-  try {
-    const m = document.cookie.match(/(?:^|;\s*)token=([^;]+)/);
-    if (m) return decodeURIComponent(m[1]);
-  } catch {}
-  try {
-    return localStorage.getItem("token");
-  } catch {}
-  return null;
+export function saveToken(token: string) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem("access_token", token);
 }
 
-export function clearAuthToken() {
+export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("access_token");
+}
+
+export function clearToken() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem("access_token");
+}
+
+export async function fetchWithAuth(path: string, init: RequestInit = {}) {
+  const token = getToken();
+  const headers: HeadersInit = {
+    ...(init.headers || {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+  const api = getApiBase();
+  return fetch(`${api}${path}`, { ...init, headers, credentials: "include" });
+}
+
+// NEW: logout helper
+export async function logout() {
   try {
-    localStorage.removeItem("token");
-  } catch {}
-  // expire the cookie
-  document.cookie = `token=; Path=/; Max-Age=0; SameSite=Lax`;
+    await fetch(`${getApiBase()}/api/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
+  } catch {
+    // network issue — ignore
+  } finally {
+    clearToken();
+  }
 }

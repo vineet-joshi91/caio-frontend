@@ -5,11 +5,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import LogoutButton from "@/components/LogoutButton";
 
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-backend.onrender.com";
-const NETLIFY_HOME = "https://caioai.netlify.app";
 
 /* ---------- Tiers ---------- */
 type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
@@ -160,12 +160,6 @@ export default function DashboardPage() {
     }
   }, [busy, token, me?.tier, router]);
 
-  function logout() {
-    try { localStorage.removeItem("access_token"); localStorage.removeItem("token"); } catch {}
-    document.cookie = "token=; path=/; max-age=0; SameSite=Lax";
-    window.location.assign(NETLIFY_HOME);
-  }
-
   const planFromTier = (t?: string) =>
     t === "admin" || t === "premium" ? "Premium" : t === "pro_plus" ? "Pro+" : t === "pro" ? "Pro" : "Demo";
 
@@ -206,12 +200,8 @@ export default function DashboardPage() {
                     </Link>
                   )}
 
-                  <button
-                    onClick={logout}
-                    className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-sm shadow"
-                  >
-                    Logout
-                  </button>
+                  <LogoutButton />
+
                 </>
               ) : (
                 <Link href="/signup" className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white">
