@@ -1,14 +1,20 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { logout } from "@/lib/auth";
+import { clearToken, getApiBase } from "../lib/auth";
 
 export default function LogoutButton() {
   const router = useRouter();
 
   const handleLogout = async () => {
-    await logout();
-    router.push("/");
+    try {
+      await fetch(`${getApiBase()}/api/logout`, { method: "POST", credentials: "include" });
+    } catch {
+      // ignore network errors
+    } finally {
+      clearToken();
+      router.push("/");
+    }
   };
 
   return (

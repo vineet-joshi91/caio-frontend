@@ -2,11 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-
-function getApiBase() {
-  const env = process.env.NEXT_PUBLIC_API_BASE || "";
-  return env.replace(/\/+$/, "");
-}
+import { getApiBase, saveToken, fetchWithAuth, routeForTier, type Tier } from "../../lib/auth";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -27,20 +23,21 @@ export default function SignupPage() {
         credentials: "include",
         body: JSON.stringify({ email, password }),
       });
+      if (!res.ok) throw new Error((await res.text()) || "Signup failed");
 
-      if (!res.ok) {
-        const msg = await res.text();
-        throw new Error(msg || "Signup failed");
-      }
-
-      const data = await res.json();
+      const data: any = await res.json();
       const token: string | undefined = data?.access_token;
 
       if (token) {
-        localStorage.setItem("access_token", token);
-        router.push("/dashboard");
+        saveToken(token);
+        const p = await fetchWithAuth("/api/profile");
+        if (p.ok) {
+          const j: any = await p.json();
+          router.push(routeForTier((j?.tier as Tier) || "demo"));
+        } else {
+          router.push("/dashboard");
+        }
       } else {
-        // Fallback: if backend didn’t return a token, let the user log in
         router.push("/login");
       }
     } catch (err: any) {

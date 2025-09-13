@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getApiBase, saveToken, getToken, fetchWithAuth, clearToken } from "@/lib/auth";
+import { getApiBase, saveToken, getToken, clearToken, fetchWithAuth, routeForTier, type Tier } from "../../lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,22 +12,16 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // If already logged in (and token works), go straight to dashboard
   useEffect(() => {
-    const token = getToken();
-    if (!token) return;
-
+    const t = getToken();
+    if (!t) return;
     (async () => {
       try {
-        const res = await fetchWithAuth("/api/profile");
-        if (res.ok) {
-          router.replace("/dashboard");
-        } else {
-          // invalid / expired token → clear
-          clearToken();
-        }
+        const r = await fetchWithAuth("/api/profile");
+        if (r.ok) router.replace("/dashboard");
+        else clearToken();
       } catch {
-        // network issue — ignore
+        // ignore
       }
     })();
   }, [router]);
@@ -44,20 +38,20 @@ export default function LoginPage() {
         credentials: "include",
         body: JSON.stringify({ email, password }),
       });
+      if (!res.ok) throw new Error((await res.text()) || "Login failed");
 
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Login failed");
-      }
-
-      const data = await res.json();
+      const data: any = await res.json();
       const token: string | undefined = data?.access_token;
-      if (!token) {
-        throw new Error("No access token returned by server.");
-      }
-
+      if (!token) throw new Error("No access token returned by server.");
       saveToken(token);
-      router.push("/dashboard");
+
+      const p = await fetchWithAuth("/api/profile");
+      if (p.ok) {
+        const j: any = await p.json();
+        router.push(routeForTier((j?.tier as Tier) || "demo"));
+      } else {
+        router.push("/dashboard");
+      }
     } catch (err: any) {
       setError(err?.message ?? "Login failed");
     } finally {

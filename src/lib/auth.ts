@@ -29,16 +29,10 @@ export async function fetchWithAuth(path: string, init: RequestInit = {}) {
   return fetch(`${api}${path}`, { ...init, headers, credentials: "include" });
 }
 
-// NEW: logout helper
-export async function logout() {
-  try {
-    await fetch(`${getApiBase()}/api/logout`, {
-      method: "POST",
-      credentials: "include",
-    });
-  } catch {
-    // network issue — ignore
-  } finally {
-    clearToken();
-  }
+export type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
+
+export function routeForTier(tier?: Tier): string {
+  if (!tier) return "/dashboard";
+  if (tier === "admin" || tier === "premium" || tier === "pro_plus") return "/premium/chat";
+  return "/dashboard";
 }
