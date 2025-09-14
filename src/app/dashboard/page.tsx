@@ -221,7 +221,7 @@ export default function DashboardPage() {
                 </Link>
               )}
               <Link
-                href="/premium/chat?trial=1"
+                href="/trial/chat"
                 className="inline-flex items-center rounded-md bg-blue-600 hover:bg-blue-500 px-3 py-1.5 text-sm"
                 title="Preview the premium chat experience"
               >
@@ -517,7 +517,7 @@ function GroupedReport({
           </p>
           <div className="mt-2 flex gap-2">
             <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
-            <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
+            <a href="/trial/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
           </div>
         </div>
       </div>
@@ -600,7 +600,7 @@ function GroupedReport({
             </div>
             <div className="mt-2 flex gap-2">
               <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
-              <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
+              <a href="/trial/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
             </div>
           </div>
         )}
@@ -642,7 +642,7 @@ function GroupedReport({
             </p>
             <div className="mt-2 flex gap-2">
               <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
-              <a href="/premium/chat?trial=1" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
+              <a href="/trial/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
             </div>
           </div>
         )}
