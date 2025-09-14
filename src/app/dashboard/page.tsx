@@ -633,7 +633,7 @@ function GroupedReport({
         {CHRO_FALLBACK && RoleWithBullets("CHRO", CHRO_FALLBACK.insights, CHRO_FALLBACK.recommendations)}
 
         {/* Unified placeholder for COO/CMO/CPO (no bullets) */}
-        {(COO || CMO || CPO) && (
+        {(tier === "demo" || tier === "pro") && (
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
             <div className="text-lg font-medium">COO / CMO / CPO</div>
             <p className="mt-2 text-sm opacity-85">
@@ -646,6 +646,7 @@ function GroupedReport({
             </div>
           </div>
         )}
+
       </div>
     </div>
   );
