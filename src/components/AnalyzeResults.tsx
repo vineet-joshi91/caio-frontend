@@ -11,6 +11,8 @@ export default function AnalyzeResult({
   tier: "demo" | "pro" | "premium" | "admin";
   onUpgrade?: () => void;
 }) {
+  console.log("AnalyzeResult summary:", summary);
+  
   const sections = useMemo(() => splitByCxo(summary), [summary]);
   const isLocked = tier === "demo" || tier === "pro";
 
