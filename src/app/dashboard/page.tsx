@@ -303,6 +303,17 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
       return `${hh}:${mm} UTC`;
     } catch { return ""; }
   }
+  function DebugRaw({ summary }: { summary: string }) {
+  if (typeof window === "undefined") return null;
+  const qs = new URLSearchParams(window.location.search);
+  if (qs.get("debug") !== "1") return null; // only show when ?debug=1
+  return (
+    <details open className="mt-4 rounded border border-yellow-600/40 bg-yellow-500/5 p-3 text-sm">
+      <summary className="font-semibold">Raw summary (debug)</summary>
+      <pre className="mt-2 whitespace-pre-wrap break-words">{summary || "(empty)"}</pre>
+    </details>
+    );
+  }
 
   async function run() {
     setBusy(true);
@@ -526,6 +537,8 @@ function GroupedReport({
   const CMO  = byName("CMO");
   const CPO  = byName("CPO");
 
+  const CHRO_FALLBACK = CHRO ?? CFO;
+
   // Build Collective Insights (Top 5) across all brains
   const collective = (() => {
     const blocks = brains.map((b) => b.insights || "");
@@ -617,7 +630,7 @@ function GroupedReport({
         {CFO && RoleWithBullets("CFO", CFO.insights, CFO.recommendations)}
 
         {/* CHRO immediately after CFO (if present) */}
-        {CHRO && RoleWithBullets("CHRO", CHRO.insights, CHRO.recommendations)}
+        {CHRO_FALLBACK && RoleWithBullets("CHRO", CHRO_FALLBACK.insights, CHRO_FALLBACK.recommendations)}
 
         {/* Unified placeholder for COO/CMO/CPO (no bullets) */}
         {(COO || CMO || CPO) && (
