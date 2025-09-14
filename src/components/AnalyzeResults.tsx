@@ -2,12 +2,6 @@
 
 import { useMemo } from "react";
 
-/**
- * Props:
- *  - summary: markdown-ish string from /api/analyze
- *  - tier: "demo" | "pro" | "premium" | "admin"
- *  - onUpgrade?: optional handler for upgrade click
- */
 export default function AnalyzeResult({
   summary,
   tier,
@@ -18,9 +12,8 @@ export default function AnalyzeResult({
   onUpgrade?: () => void;
 }) {
   const sections = useMemo(() => splitByCxo(summary), [summary]);
-  const isLocked = tier === "demo" || tier === "pro"; // chat is Pro+/Premium
+  const isLocked = tier === "demo" || tier === "pro";
 
-  // Force CHRO directly under CFO
   const roleOrder = ["CFO", "CHRO", "COO", "CMO", "CPO"] as const;
 
   return (
@@ -77,14 +70,14 @@ function splitByCxo(src: string) {
     >,
   };
 
-  // More permissive heading matchers
   const isCollective = (s: string) =>
-    /^#{1,6}\s*collective insights\b/i.test(s) || /^\*\*?\s*collective insights\s*\*?\*?:?\s*$/i.test(s.trim());
+    /^#{1,6}\s*collective insights\b/i.test(s) || /^\*\*?\s*collective insights/i.test(s);
   const isReco = (s: string) =>
-    /^#{1,6}\s*recommendations\b/i.test(s) || /^\*\*?\s*recommendations\s*\*?\*?:?\s*$/i.test(s.trim());
+    /^#{1,6}\s*recommendations\b/i.test(s) || /^\*\*?\s*recommendations/i.test(s);
 
+  // Accept formats like "## CHRO", "### CHRO", "**CHRO**:", "CHRO recommends:"
   const cxoMatcher =
-    /^(?:#{1,6}\s*)?(?:\*\*)?(CFO|COO|CHRO|CMO|CPO)(?:\*\*)?\s*:?\s*$/i; // accepts "## CHRO", "**CHRO**:", "CHRO", etc.
+    /^(?:#{1,6}\s*)?(?:\*\*)?(CFO|COO|CHRO|CMO|CPO)(?:\*\*)?(?:\s+recommends:?)?\s*:?$/i;
 
   let current: string | null = null;
   const buckets: Record<string, string[]> = {
@@ -126,19 +119,18 @@ function splitByCxo(src: string) {
     (k) => (out.cxo[k] = join(buckets[k]))
   );
 
-  // ✅ If CHRO missing but CFO exists, mirror CFO to CHRO
+  // ✅ Fallback: if CHRO is empty but CFO has content, copy CFO → CHRO
   if (!out.cxo.CHRO && out.cxo.CFO) {
     out.cxo.CHRO = out.cxo.CFO;
   }
 
-  // Fallback: no headings caught at all → show everything as one block
   if (!out.collective && !out.reco && Object.values(out.cxo).every((v) => !v)) {
     out.collective = text.trim();
   }
   return out;
 }
 
-/* --------- tiny UI bits (no external deps beyond Tailwind) --------- */
+/* --------- tiny UI bits --------- */
 
 function Accordion({
   title,
@@ -189,7 +181,7 @@ function Upsell({
         >
           Upgrade
         </a>
-        {/* plain anchor so it always works */}
+        {/* fixed link */}
         <a
           href="/premium/chat"
           className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800"
