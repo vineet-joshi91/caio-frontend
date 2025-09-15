@@ -7,11 +7,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import LogoutButton from "../../components/LogoutButton";
 
+/* ---------------- Config ---------------- */
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-backend.onrender.com";
 
-/* ---------- Tiers ---------- */
+/* ---------- Types ---------- */
 type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
 type Me = { email: string; is_admin: boolean; is_paid: boolean; created_at?: string; tier?: Tier };
 type Result =
@@ -115,7 +116,7 @@ export default function DashboardPage() {
     })();
   }, []);
 
-  /* ✅ Auto-redirect Admin / Premium / Pro+ to Chat Mode */
+  // Redirect premium experiences to chat
   useEffect(() => {
     if (!busy && token && (me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus")) {
       router.replace("/premium/chat");
@@ -166,7 +167,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* CTA row for Demo & Pro: Upgrade + Try Chat */}
+          {/* CTA row for Demo & Pro */}
           {token && (me?.tier === "demo" || me?.tier === "pro") && (
             <div className="mt-3 flex items-center gap-3">
               {me?.tier === "demo" && !me?.is_paid && (
@@ -184,13 +185,13 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* If redirecting, show a tiny hint (no flicker) */}
+          {/* tiny hint while redirecting */}
           {token && (me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus") && (
             <div className="mt-2 text-xs opacity-70">Redirecting to Premium Chat…</div>
           )}
         </header>
 
-        {/* normal dashboard continues for Demo/Pro only */}
+        {/* Demo/Pro dashboard */}
         {!busy && !err && !(me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus") && (
           <AnalyzeCard token={token} isPaid={!!me?.is_paid} tier={(me?.tier || "demo") as Tier} />
         )}
@@ -210,7 +211,7 @@ export default function DashboardPage() {
   );
 }
 
-/* ---------------- Analyze card (with 429 limit banner) ---------------- */
+/* ---------------- Analyze card ---------------- */
 
 function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; tier: Tier }) {
   type LimitInfo = {
@@ -242,11 +243,7 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
     const f = e.dataTransfer.files?.[0]; if (f) setFile(f);
   }
 
-  function resetErrors() {
-    setFriendlyErr(null);
-    setLimit(null);
-    setResult(null);
-  }
+  function resetErrors() { setFriendlyErr(null); setLimit(null); setResult(null); }
 
   function formatUtcShort(iso?: string) {
     if (!iso) return "";
@@ -265,6 +262,10 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
       const fd = new FormData();
       if (text.trim()) fd.append("text", text.trim());
       if (file) fd.append("file", file);
+
+      // ✅ Always ask backend for all 5 CXO brains
+      fd.append("brains", "CFO,CHRO,COO,CMO,CPO");
+
       if (!text.trim() && !file) throw new Error("Enter text or upload a file.");
 
       const res = await withTimeout(
@@ -317,7 +318,7 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
     <section className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800 space-y-5">
       <h2 className="text-xl font-semibold">Quick analyze</h2>
 
-      {/* daily limit banner */}
+      {/* limit banner */}
       {limit && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">
           <div className="flex items-start justify-between gap-3">
@@ -358,7 +359,7 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
           <svg width="28" height="28" viewBox="0 0 24 24" className="opacity-80">
             <path fill="currentColor" d="M19 12v7H5v-7H3v9h18v-9zM11 2h2v10h3l-4 4l-4-4h3z" />
           </svg>
-          <p className="opacity-85">Drag & drop a document here</p>
+        <p className="opacity-85">Drag & drop a document here</p>
           <p className="text-xs opacity-60">PDF, DOCX, TXT…</p>
           <button type="button" onClick={onBrowseClick} className="mt-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm">
             or browse files
@@ -443,7 +444,7 @@ function GroupedReport({
 }) {
   const normalized = normalizeAnalysis(md);
 
-  /* ---- Demo preview block (unchanged feel) ---- */
+  /* ---- Demo preview block ---- */
   if (demo) {
     return (
       <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
@@ -465,33 +466,21 @@ function GroupedReport({
     );
   }
 
-  /* ---- Full (non-demo) rendering with new gating ---- */
+  /* ---- Full (non-demo) rendering with new gating and Pro=5 brains ---- */
   const brains = parseBrains(normalized);
+  const desiredOrder = ["CFO","CHRO","COO","CMO","CPO"] as const;
 
   const byName = (name: string) =>
     brains.find(b => (b.name || "").trim().toUpperCase().startsWith(name)) || null;
 
-  const CFO  = byName("CFO");
-  const CHRO = byName("CHRO");
-  const COO  = byName("COO");
-  const CMO  = byName("CMO");
-  const CPO  = byName("CPO");
+  const proOrAbove = tier === "pro" || tier === "pro_plus" || tier === "premium" || tier === "admin";
 
-  // Collectives (unchanged)
-  const collective = (() => {
-    const blocks = brains.map((b) => b.insights || "");
-    const all: string[] = [];
-    blocks.forEach((b) => extractListItems(b).forEach((x) => all.push(x)));
-    const counts = new Map<string, { c: number; text: string }>();
-    for (const it of all) {
-      const key = it.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-      counts.set(key, { c: (counts.get(key)?.c ?? 0) + 1, text: it });
-    }
-    const ranked = [...counts.values()]
-      .sort((a, b) => b.c - a.c || b.text.length - a.text.length)
-      .map((x) => x.text);
-    return ranked.slice(0, 5);
-  })();
+  // Pro or above: ALWAYS render all 5 cards (placeholders if missing)
+  // Demo: render only sections that exist
+  const brainCards = (proOrAbove
+    ? desiredOrder.map(label => ({ label, data: byName(label) }))
+    : desiredOrder.map(label => ({ label, data: byName(label) })).filter(x => !!x.data)
+  );
 
   function RoleCard({
     label,
@@ -507,7 +496,7 @@ function GroupedReport({
     const insightItems = extractListItems(insights || "");
     const recItems = extractListItems(recommendations || "");
 
-    // Demo: 1 item; Pro: 3 items; Pro+/Premium/Admin: 3 items (usually LLM outputs 3)
+    // Demo: 1 item; Pro: 3 items; Pro+/Premium/Admin: 3 items
     const maxForTier = (t: Tier) => (t === "demo" ? 1 : 3);
     const showInsights = insightItems.slice(0, maxForTier(tier));
     const showRecs = recItems.slice(0, maxForTier(tier));
@@ -576,6 +565,22 @@ function GroupedReport({
     );
   }
 
+  // Collectives (unchanged)
+  const collective = (() => {
+    const blocks = brains.map((b) => b.insights || "");
+    const all: string[] = [];
+    blocks.forEach((b) => extractListItems(b).forEach((x) => all.push(x)));
+    const counts = new Map<string, { c: number; text: string }>();
+    for (const it of all) {
+      const key = it.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      counts.set(key, { c: (counts.get(key)?.c ?? 0) + 1, text: it });
+    }
+    const ranked = [...counts.values()]
+      .sort((a, b) => b.c - a.c || b.text.length - a.text.length)
+      .map((x) => x.text);
+    return ranked.slice(0, 5);
+  })();
+
   return (
     <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
       <h3 className="font-semibold">{title || "Analysis Result"}</h3>
@@ -592,11 +597,15 @@ function GroupedReport({
       )}
 
       <div className="space-y-3">
-        {CFO && <RoleCard label="CFO"  insights={CFO.insights}  recommendations={CFO.recommendations}  tier={tier} />}
-        {CHRO && <RoleCard label="CHRO" insights={CHRO.insights} recommendations={CHRO.recommendations} tier={tier} />}
-        {COO && <RoleCard label="COO"  insights={COO.insights}  recommendations={COO.recommendations}  tier={tier} />}
-        {CMO && <RoleCard label="CMO"  insights={CMO.insights}  recommendations={CMO.recommendations}  tier={tier} />}
-        {CPO && <RoleCard label="CPO"  insights={CPO.insights}  recommendations={CPO.recommendations}  tier={tier} />}
+        {brainCards.map(({ label, data }) => (
+          <RoleCard
+            key={label}
+            label={label}
+            insights={data?.insights}
+            recommendations={data?.recommendations}
+            tier={tier}
+          />
+        ))}
       </div>
     </div>
   );
