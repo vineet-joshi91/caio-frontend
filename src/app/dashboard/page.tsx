@@ -359,7 +359,7 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
           <svg width="28" height="28" viewBox="0 0 24 24" className="opacity-80">
             <path fill="currentColor" d="M19 12v7H5v-7H3v9h18v-9zM11 2h2v10h3l-4 4l-4-4h3z" />
           </svg>
-        <p className="opacity-85">Drag & drop a document here</p>
+          <p className="opacity-85">Drag & drop a document here</p>
           <p className="text-xs opacity-60">PDF, DOCX, TXT…</p>
           <button type="button" onClick={onBrowseClick} className="mt-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm">
             or browse files
@@ -466,7 +466,7 @@ function GroupedReport({
     );
   }
 
-  /* ---- Full (non-demo) rendering with new gating and Pro=5 brains ---- */
+  /* ---- Full (non-demo): Pro = 5 brains, show Recommendations only ---- */
   const brains = parseBrains(normalized);
   const desiredOrder = ["CFO","CHRO","COO","CMO","CPO"] as const;
 
@@ -476,7 +476,7 @@ function GroupedReport({
   const proOrAbove = tier === "pro" || tier === "pro_plus" || tier === "premium" || tier === "admin";
 
   // Pro or above: ALWAYS render all 5 cards (placeholders if missing)
-  // Demo: render only sections that exist
+  // Demo: render only sections that exist (handled elsewhere)
   const brainCards = (proOrAbove
     ? desiredOrder.map(label => ({ label, data: byName(label) }))
     : desiredOrder.map(label => ({ label, data: byName(label) })).filter(x => !!x.data)
@@ -484,21 +484,18 @@ function GroupedReport({
 
   function RoleCard({
     label,
-    insights,
     recommendations,
     tier,
   }: {
     label: string;
-    insights?: string;
     recommendations?: string;
     tier: Tier;
   }) {
-    const insightItems = extractListItems(insights || "");
+    // Recommendations ONLY (no Insights in individual CXO sections)
     const recItems = extractListItems(recommendations || "");
 
-    // Demo: 1 item; Pro: 3 items; Pro+/Premium/Admin: 3 items
+    // Demo: 1 rec; Pro and above: 3 recs (typical model output)
     const maxForTier = (t: Tier) => (t === "demo" ? 1 : 3);
-    const showInsights = insightItems.slice(0, maxForTier(tier));
     const showRecs = recItems.slice(0, maxForTier(tier));
 
     const showUpgradePlacard = tier === "demo";
@@ -510,22 +507,10 @@ function GroupedReport({
           <h4 className="text-lg font-medium">{label}</h4>
         </header>
 
-        {showInsights.length > 0 && (
+        {/* Recommendations only */}
+        {showRecs.length > 0 ? (
           <>
-            <div className="mt-3 text-sm font-semibold opacity-90">Insights</div>
-            <ol className="mt-2 list-decimal pl-6 space-y-1">
-              {showInsights.map((it, i) => (
-                <li key={i} className="leading-7">
-                  <InlineMD text={it} />
-                </li>
-              ))}
-            </ol>
-          </>
-        )}
-
-        {showRecs.length > 0 && (
-          <>
-            <div className="mt-4 text-sm font-semibold opacity-90">Recommendations</div>
+            <div className="mt-1 text-sm font-semibold opacity-90">Recommendations</div>
             <ol className="mt-2 list-decimal pl-6 space-y-1">
               {showRecs.map((it, i) => (
                 <li key={i} className="leading-7">
@@ -534,6 +519,8 @@ function GroupedReport({
               ))}
             </ol>
           </>
+        ) : (
+          <div className="mt-2 text-sm opacity-70">No recommendations generated for this section.</div>
         )}
 
         {showUpgradePlacard && (
@@ -565,7 +552,7 @@ function GroupedReport({
     );
   }
 
-  // Collectives (unchanged)
+  // Collective section (unchanged)
   const collective = (() => {
     const blocks = brains.map((b) => b.insights || "");
     const all: string[] = [];
@@ -601,7 +588,6 @@ function GroupedReport({
           <RoleCard
             key={label}
             label={label}
-            insights={data?.insights}
             recommendations={data?.recommendations}
             tier={tier}
           />
