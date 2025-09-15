@@ -74,50 +74,12 @@ function extractListItems(text: string): string[] {
   const parts = cleaned.split(/\n(?=\s*(?:\d+[.)]|[-*•])\s)/g);
   return parts.map((p) => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim()).filter(Boolean);
 }
-function sentences(text: string): string[] {
-  const clean = text.replace(/^#+\s.*$/gm, " ").replace(/\n+/g, " ").replace(/\s{2,}/g, " ").trim();
-  return clean.split(/(?<=[.!?])\s+(?=[A-Z(])/).filter((s) => s.length > 40);
-}
 function InlineMD({ text }: { text: string }) {
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ p: (props) => <span {...props} /> }}>
       {text}
     </ReactMarkdown>
   );
-}
-function truncateForDemo(text: string, maxChars = 120, teaser = " _…Upgrade to see the full item._") {
-  const clean = text.replace(/\s+/g, " ").trim();
-  if (clean.length <= maxChars) return clean + teaser;
-  const clipped = clean.slice(0, maxChars).replace(/[\s,.-]+[^,.\s-]*$/, "");
-  return clipped + teaser;
-}
-function deriveOneActionFromInsights(insights?: string): string | null {
-  const first = extractListItems(insights || "")[0] || sentences(insights || "")[0];
-  if (!first) return null;
-  if (/^\s*\*\*.+?\*\*\s*:/.test(first)) return first;
-  return `**Priority Action**: ${first}`;
-}
-
-/* ---------- Demo synthesis (for nice preview) ---------- */
-function synthesizeFromContext(seedText: string, fileName?: string) {
-  const src = `${seedText || ""} ${fileName || ""}`.toLowerCase();
-  const hasRevenue = /(revenue|forecast|projection|budget|p&l|profit|invoice|cash\s?flow|collections|ds[o0])/i.test(src);
-  const hasHiring = /(hiring|recruit|offer|headcount|attrition|engagement|talent|people)/i.test(src);
-  const hasOps = /(ops|operations|sla|throughput|backlog|process|capacity)/i.test(src);
-  const insight = hasRevenue
-    ? "**Liquidity exposure from slow collections**: the document context suggests revenue planning and payment timing; extend your cash planning by monitoring DSO and top-account ageing to avoid month-end crunches."
-    : hasHiring
-    ? "**Talent stability risk**: the context points to headcount changes; track acceptance rates and exit drivers by function to prevent productivity loss."
-    : hasOps
-    ? "**Throughput constraint**: there are signals of process load; identify the longest queue (bottleneck) and rebalance work-in-progress limits."
-    : "**Execution risk**: the document hints at important changes; align owners, timelines, and a single KPI per workstream to prevent slippage.";
-  const cfo = hasRevenue
-    ? "**Shorten DSO by 3–5 days**: add early-payment discounts (1/10 net 30) for top 20 AR accounts, automate reminders at +3/+7/+14, and reconcile unapplied cash weekly to lift cash conversion."
-    : "**Tighten spend governance**: enforce PO-before-invoice for vendors, and roll a weekly cash bridge (opening → ops → financing) to forecast runway with ±5% error.";
-  const chro = hasHiring
-    ? "**Stabilize offers & ramp**: set a 48-hour SLA for feedback, publish compensation bands in JD, and run ‘why-we-win/lose’ on offers to lift acceptance by 10–15%."
-    : "**Lower regrettable attrition**: run quarterly stay-interviews for top 10% performers, add manager 1:1 scorecards, and flag teams with >2 back-to-back low eNPS for intervention.";
-  return { insight, cfo, chro };
 }
 
 /* ---------------- Page ---------------- */
@@ -189,19 +151,12 @@ export default function DashboardPage() {
               {token ? (
                 <>
                   <span className={`px-2.5 py-1 rounded-full text-xs tracking-wide border ${planClass}`}>{plan}</span>
-
-                  {/* Admin Mode button only visible to admins */}
                   {me?.tier === "admin" && (
-                    <Link
-                      href="/admin"
-                      className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-sm shadow"
-                    >
+                    <Link href="/admin" className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-sm shadow">
                       Admin Mode
                     </Link>
                   )}
-
                   <LogoutButton />
-
                 </>
               ) : (
                 <Link href="/signup" className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white">
@@ -209,7 +164,6 @@ export default function DashboardPage() {
                 </Link>
               )}
             </div>
-
           </div>
 
           {/* CTA row for Demo & Pro: Upgrade + Try Chat */}
@@ -302,17 +256,6 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
       const mm = String(d.getUTCMinutes()).padStart(2, "0");
       return `${hh}:${mm} UTC`;
     } catch { return ""; }
-  }
-  function DebugRaw({ summary }: { summary: string }) {
-  if (typeof window === "undefined") return null;
-  const qs = new URLSearchParams(window.location.search);
-  if (qs.get("debug") !== "1") return null; // only show when ?debug=1
-  return (
-    <details open className="mt-4 rounded border border-yellow-600/40 bg-yellow-500/5 p-3 text-sm">
-      <summary className="font-semibold">Raw summary (debug)</summary>
-      <pre className="mt-2 whitespace-pre-wrap break-words">{summary || "(empty)"}</pre>
-    </details>
-    );
   }
 
   async function run() {
@@ -500,16 +443,14 @@ function GroupedReport({
 }) {
   const normalized = normalizeAnalysis(md);
 
-  /* ---- Demo preview: keep your existing feel, minimal change ---- */
+  /* ---- Demo preview block (unchanged feel) ---- */
   if (demo) {
-    // Render a simple preview block in demo mode
     return (
       <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
         <h3 className="font-semibold">{title || "Demo Mode"}</h3>
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-sm opacity-85">
           This is a preview. Run a full analysis with a document for richer CFO/CHRO insights.
         </div>
-        {/* unified placeholder for others */}
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
           <div className="text-lg font-medium">COO / CMO / CPO</div>
           <p className="mt-2 text-sm opacity-80">
@@ -524,10 +465,9 @@ function GroupedReport({
     );
   }
 
-  /* ---- Full (non-demo) rendering ---- */
+  /* ---- Full (non-demo) rendering with new gating ---- */
   const brains = parseBrains(normalized);
 
-  // Pull out by role name (case-insensitive safety)
   const byName = (name: string) =>
     brains.find(b => (b.name || "").trim().toUpperCase().startsWith(name)) || null;
 
@@ -537,14 +477,11 @@ function GroupedReport({
   const CMO  = byName("CMO");
   const CPO  = byName("CPO");
 
-  const CHRO_FALLBACK = CHRO ?? CFO;
-
-  // Build Collective Insights (Top 5) across all brains
+  // Collectives (unchanged)
   const collective = (() => {
     const blocks = brains.map((b) => b.insights || "");
     const all: string[] = [];
     blocks.forEach((b) => extractListItems(b).forEach((x) => all.push(x)));
-
     const counts = new Map<string, { c: number; text: string }>();
     for (const it of all) {
       const key = it.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -553,46 +490,64 @@ function GroupedReport({
     const ranked = [...counts.values()]
       .sort((a, b) => b.c - a.c || b.text.length - a.text.length)
       .map((x) => x.text);
-
-    if (ranked.length >= 5) return ranked.slice(0, 5);
-
-    const unique: string[] = [];
-    const seen = new Set(ranked.map((t) => t.toLowerCase()));
-    for (const b of blocks) {
-      for (const it of extractListItems(b)) {
-        const k = it.toLowerCase();
-        if (!seen.has(k)) { unique.push(it); seen.add(k); }
-        if (ranked.length + unique.length >= 5) break;
-      }
-      if (ranked.length + unique.length >= 5) break;
-    }
-    return ranked.concat(unique).slice(0, 5);
+    return ranked.slice(0, 5);
   })();
 
-  // Helper to render a role card with 3 bullets
-  function RoleWithBullets(label: string, insights?: string, recommendations?: string) {
-    const insightFirst = deriveOneActionFromInsights(insights);
-    const top3 = extractListItems(recommendations || "").slice(0, 3);
-    const showUpsell = tier === "demo" || tier === "pro";
+  function RoleCard({
+    label,
+    insights,
+    recommendations,
+    tier,
+  }: {
+    label: string;
+    insights?: string;
+    recommendations?: string;
+    tier: Tier;
+  }) {
+    const insightItems = extractListItems(insights || "");
+    const recItems = extractListItems(recommendations || "");
+
+    // Demo: 1 item; Pro: 3 items; Pro+/Premium/Admin: 3 items (usually LLM outputs 3)
+    const maxForTier = (t: Tier) => (t === "demo" ? 1 : 3);
+    const showInsights = insightItems.slice(0, maxForTier(tier));
+    const showRecs = recItems.slice(0, maxForTier(tier));
+
+    const showUpgradePlacard = tier === "demo";
+    const showChatUpsell = tier === "pro";
 
     return (
-      <details className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4" open>
-        <summary className="cursor-pointer text-lg font-medium select-none">{label}</summary>
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+        <header className="flex items-center justify-between">
+          <h4 className="text-lg font-medium">{label}</h4>
+        </header>
 
-        {insightFirst && (
-          <div className="mt-2 text-sm opacity-90">
-            <InlineMD text={insightFirst} />
-          </div>
-        )}
-        {top3.length > 0 && (
-          <ol className="mt-3 list-decimal pl-6 space-y-1">
-            {top3.map((it, j) => (
-              <li key={j} className="leading-7"><InlineMD text={it} /></li>
-            ))}
-          </ol>
+        {showInsights.length > 0 && (
+          <>
+            <div className="mt-3 text-sm font-semibold opacity-90">Insights</div>
+            <ol className="mt-2 list-decimal pl-6 space-y-1">
+              {showInsights.map((it, i) => (
+                <li key={i} className="leading-7">
+                  <InlineMD text={it} />
+                </li>
+              ))}
+            </ol>
+          </>
         )}
 
-        {showUpsell && (
+        {showRecs.length > 0 && (
+          <>
+            <div className="mt-4 text-sm font-semibold opacity-90">Recommendations</div>
+            <ol className="mt-2 list-decimal pl-6 space-y-1">
+              {showRecs.map((it, i) => (
+                <li key={i} className="leading-7">
+                  <InlineMD text={it} />
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
+
+        {showUpgradePlacard && (
           <div className="mt-3 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
             <div className="mb-1 font-semibold">Unlock more for {label}</div>
             <div className="opacity-90">
@@ -604,7 +559,20 @@ function GroupedReport({
             </div>
           </div>
         )}
-      </details>
+
+        {showChatUpsell && (
+          <div className="mt-3 rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-[13px]">
+            <div className="mb-1 font-semibold">Chat unlock</div>
+            <div className="opacity-90">
+              Please try the Chat feature or upgrade to <b>Pro+</b> or <b>Premium</b> for full chat access.
+            </div>
+            <div className="mt-2 flex gap-2">
+              <a href="/trial/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
+              <a href="/payments" className="rounded-md bg-sky-600 px-3 py-1 text-white hover:bg-sky-500">Upgrade</a>
+            </div>
+          </div>
+        )}
+      </section>
     );
   }
 
@@ -624,29 +592,11 @@ function GroupedReport({
       )}
 
       <div className="space-y-3">
-        <h4 className="text-base font-semibold opacity-90">Recommendations</h4>
-
-        {/* CFO first (if present) */}
-        {CFO && RoleWithBullets("CFO", CFO.insights, CFO.recommendations)}
-
-        {/* CHRO immediately after CFO (if present) */}
-        {CHRO_FALLBACK && RoleWithBullets("CHRO", CHRO_FALLBACK.insights, CHRO_FALLBACK.recommendations)}
-
-        {/* Unified placeholder for COO/CMO/CPO (no bullets) */}
-        {(tier === "demo" || tier === "pro") && (
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-            <div className="text-lg font-medium">COO / CMO / CPO</div>
-            <p className="mt-2 text-sm opacity-85">
-              For more insights from COO, CMO, and CPO, please upgrade to <b>Pro</b>. If you want to chat with CAIO,
-              upgrade to <b>Pro+</b> or <b>Premium</b>.
-            </p>
-            <div className="mt-2 flex gap-2">
-              <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
-              <a href="/trial/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
-            </div>
-          </div>
-        )}
-
+        {CFO && <RoleCard label="CFO"  insights={CFO.insights}  recommendations={CFO.recommendations}  tier={tier} />}
+        {CHRO && <RoleCard label="CHRO" insights={CHRO.insights} recommendations={CHRO.recommendations} tier={tier} />}
+        {COO && <RoleCard label="COO"  insights={COO.insights}  recommendations={COO.recommendations}  tier={tier} />}
+        {CMO && <RoleCard label="CMO"  insights={CMO.insights}  recommendations={CMO.recommendations}  tier={tier} />}
+        {CPO && <RoleCard label="CPO"  insights={CPO.insights}  recommendations={CPO.recommendations}  tier={tier} />}
       </div>
     </div>
   );

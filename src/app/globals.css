@@ -41,3 +41,9 @@ body {
 * { scrollbar-width: thin; scrollbar-color: #6b7280 transparent; }
 *::-webkit-scrollbar { height: 8px; width: 8px; }
 *::-webkit-scrollbar-thumb { background: #6b7280; border-radius: 8px; }
+
+/* Demo gating: show only the 1st list item in Insights & Recs */
+.tier-demo ol.insights li:nth-child(n+2),
+.tier-demo ol.recs li:nth-child(n+2) {
+  display: none;
+}
