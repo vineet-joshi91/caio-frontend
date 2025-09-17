@@ -90,6 +90,7 @@ export default function DashboardPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const redirectingRef = useRef(false);
 
   useEffect(() => {
     const t = readTokenSafe();
@@ -101,6 +102,11 @@ export default function DashboardPage() {
           fetch(`${API_BASE}/api/profile`, { headers: { Authorization: `Bearer ${t}` } }),
           20000
         );
+        if (res.status === 401) {
+          // Bad/expired token → clear and kick to login
+          setErr("Invalid token");
+          return;
+        }
         if (!res.ok) throw new Error(await res.text());
         const j = await res.json();
         setMe({
@@ -116,12 +122,29 @@ export default function DashboardPage() {
     })();
   }, []);
 
-  // Redirect premium experiences to chat
+  // Defensive: if token is invalid, clear it once and go to login (prevents login<->dashboard loops)
   useEffect(() => {
-    if (!busy && token && (me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus")) {
+    if (!err) return;
+    const msg = String(err).toLowerCase();
+    if (msg.includes("invalid token") || msg.includes('"detail":"invalid token"') || msg.includes("unauthorized") || msg.includes("401")) {
+      try { localStorage.removeItem("access_token"); localStorage.removeItem("token"); } catch {}
+      if (!redirectingRef.current) {
+        redirectingRef.current = true;
+        router.replace("/login");
+      }
+    }
+  }, [err, router]);
+
+  // Redirect premium experiences to chat — guard so it only fires once
+  useEffect(() => {
+    if (redirectingRef.current) return;
+    if (busy || !token || !me) return;
+    const highTier = me.tier === "admin" || me.tier === "premium" || me.tier === "pro_plus";
+    if (highTier) {
+      redirectingRef.current = true;
       router.replace("/premium/chat");
     }
-  }, [busy, token, me?.tier, router]);
+  }, [busy, token, me, router]);
 
   const planFromTier = (t?: string) =>
     t === "admin" || t === "premium" ? "Premium" : t === "pro_plus" ? "Pro+" : t === "pro" ? "Pro" : "Demo";
@@ -135,6 +158,19 @@ export default function DashboardPage() {
       : plan === "Pro"
       ? "bg-sky-500/15 border-sky-400/40 text-sky-200"
       : "bg-amber-500/15 border-amber-400/40 text-amber-200";
+
+  // Minimal shell while redirecting (prevents flicker)
+  if (redirectingRef.current) {
+    return (
+      <main className="min-h-screen p-6 bg-zinc-950 text-zinc-100">
+        <div className="max-w-4xl mx-auto">
+          <div className="mt-8 bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800">
+            Redirecting to Premium Chat…
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen p-6 bg-zinc-950 text-zinc-100">

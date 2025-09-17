@@ -1,8 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getApiBase, saveToken, fetchWithAuth, routeForTier, type Tier } from "../../lib/auth";
+import {
+  getApiBase,
+  saveToken,
+  getToken,
+  clearToken,
+  fetchWithAuth,
+  routeForTier,
+  type Tier,
+} from "../../lib/auth";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -10,6 +18,31 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // ✅ Prevent double redirects
+  const redirectOnceRef = useRef(false);
+
+  // If already logged in, bounce to the right place (once)
+  useEffect(() => {
+    if (redirectOnceRef.current) return;
+    const token = getToken();
+    if (!token) return;
+
+    (async () => {
+      try {
+        const r = await fetchWithAuth("/api/profile");
+        if (r.ok) {
+          const j: any = await r.json();
+          redirectOnceRef.current = true;
+          router.replace(routeForTier((j?.tier as Tier) || "demo"));
+        } else {
+          clearToken();
+        }
+      } catch {
+        // ignore; stay on page
+      }
+    })();
+  }, [router]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,7 +85,7 @@ export default function SignupPage() {
       <div className="max-w-md w-full rounded-2xl bg-neutral-900/80 p-6 shadow-xl">
         <h1 className="text-2xl font-semibold mb-4">Create your account</h1>
 
-        <form onSubmit={onSubmit} className="space-y-4">
+        <form onSubmit={onSubmit} className="space-y-4" noValidate>
           <div>
             <label className="block mb-1 text-sm text-neutral-300">Email</label>
             <input
@@ -62,6 +95,8 @@ export default function SignupPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={false}
             />
           </div>
 
