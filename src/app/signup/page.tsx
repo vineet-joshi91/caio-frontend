@@ -2,44 +2,76 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  getApiBase,
-  saveToken,
-  getToken,
-  clearToken,
-  fetchWithAuth,
-  routeForTier,
-  type Tier,
-} from "../../lib/auth";
+import Link from "next/link";
 
+/* ---------- self-contained auth utils ---------- */
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
+  "https://caio-backend.onrender.com";
+
+type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
+
+function saveToken(tok: string) {
+  try {
+    localStorage.setItem("access_token", tok);
+    localStorage.setItem("token", tok);
+    document.cookie = `token=${encodeURIComponent(tok)}; path=/; SameSite=Lax`;
+  } catch {}
+}
+function getToken(): string {
+  try {
+    return (
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("token") ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+function clearToken() {
+  try {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("token");
+    document.cookie = "token=; Max-Age=0; path=/";
+  } catch {}
+}
+async function fetchProfileByToken(tok: string) {
+  const r = await fetch(`${API_BASE}/api/profile`, {
+    headers: { Authorization: `Bearer ${tok}` },
+  });
+  return r;
+}
+function routeForTier(t: Tier): string {
+  if (t === "admin" || t === "premium" || t === "pro_plus") return "/premium/chat";
+  return "/dashboard";
+}
+
+/* ------------------ page ------------------ */
 export default function SignupPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // ✅ Prevent double redirects
   const redirectOnceRef = useRef(false);
 
-  // If already logged in, bounce to the right place (once)
+  // If already logged in, bounce once
   useEffect(() => {
-    if (redirectOnceRef.current) return;
-    const token = getToken();
-    if (!token) return;
-
+    const tok = getToken();
+    if (!tok || redirectOnceRef.current) return;
     (async () => {
       try {
-        const r = await fetchWithAuth("/api/profile");
+        const r = await fetchProfileByToken(tok);
         if (r.ok) {
-          const j: any = await r.json();
+          const j = await r.json();
           redirectOnceRef.current = true;
           router.replace(routeForTier((j?.tier as Tier) || "demo"));
         } else {
           clearToken();
         }
       } catch {
-        // ignore; stay on page
+        /* ignore */
       }
     })();
   }, [router]);
@@ -50,28 +82,37 @@ export default function SignupPage() {
     setBusy(true);
 
     try {
-      const res = await fetch(`${getApiBase()}/api/signup`, {
+      const resp = await fetch(`${API_BASE}/api/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim(), password }),
       });
-      if (!res.ok) throw new Error((await res.text()) || "Signup failed");
 
-      const data: any = await res.json();
-      const token: string | undefined = data?.access_token;
+      const raw = await resp.text();
+      let data: any = {};
+      try { data = raw ? JSON.parse(raw) : {}; } catch {}
 
-      if (token) {
-        saveToken(token);
-        const p = await fetchWithAuth("/api/profile");
+      if (!resp.ok) {
+        clearToken();
+        throw new Error(
+          data?.detail || data?.message || raw || "Signup failed. Please try again."
+        );
+      }
+
+      const tok: string | undefined = data?.access_token;
+      if (tok) {
+        saveToken(tok);
+        const p = await fetchProfileByToken(tok);
         if (p.ok) {
-          const j: any = await p.json();
-          router.push(routeForTier((j?.tier as Tier) || "demo"));
+          const j = await p.json();
+          router.replace(routeForTier((j?.tier as Tier) || "demo"));
         } else {
-          router.push("/dashboard");
+          router.replace("/dashboard");
         }
       } else {
-        router.push("/login");
+        // Some backends may not auto-login after signup; fall back to login
+        router.replace("/login");
       }
     } catch (err: any) {
       setError(err?.message ?? "Signup failed");
@@ -125,9 +166,9 @@ export default function SignupPage() {
 
         <p className="mt-4 text-sm text-neutral-400">
           Already have an account?{" "}
-          <a className="underline text-blue-400 hover:text-blue-300" href="/login">
+          <Link href="/login" className="underline text-blue-400 hover:text-blue-300">
             Log in
-          </a>
+          </Link>
         </p>
       </div>
     </main>

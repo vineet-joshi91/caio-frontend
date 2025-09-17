@@ -3,44 +3,76 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import {
-  getApiBase,
-  saveToken,
-  getToken,
-  clearToken,
-  fetchWithAuth,
-  routeForTier,
-  type Tier,
-} from "../../lib/auth";
 
+/* ---------- tiny self-contained auth utils ---------- */
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
+  "https://caio-backend.onrender.com";
+
+type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
+
+function saveToken(tok: string) {
+  try {
+    localStorage.setItem("access_token", tok);
+    localStorage.setItem("token", tok);
+    // simple cookie for SSR fetches if you ever use it
+    document.cookie = `token=${encodeURIComponent(tok)}; path=/; SameSite=Lax`;
+  } catch {}
+}
+function getToken(): string {
+  try {
+    return (
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("token") ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+function clearToken() {
+  try {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("token");
+    document.cookie = "token=; Max-Age=0; path=/";
+  } catch {}
+}
+async function fetchProfileByToken(tok: string) {
+  const r = await fetch(`${API_BASE}/api/profile`, {
+    headers: { Authorization: `Bearer ${tok}` },
+  });
+  return r;
+}
+function routeForTier(t: Tier): string {
+  if (t === "admin" || t === "premium" || t === "pro_plus") return "/premium/chat";
+  return "/dashboard";
+}
+
+/* ------------------ page ------------------ */
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // ✅ Prevent double redirects (fixes flicker/loops)
   const redirectOnceRef = useRef(false);
 
-  // If already logged in, hop directly to the right place (once)
+  // If already logged in, hop once to the right place
   useEffect(() => {
-    if (redirectOnceRef.current) return;
-    const token = getToken();
-    if (!token) return;
-
+    const tok = getToken();
+    if (!tok || redirectOnceRef.current) return;
     (async () => {
       try {
-        const r = await fetchWithAuth("/api/profile");
+        const r = await fetchProfileByToken(tok);
         if (r.ok) {
-          const j: any = await r.json();
+          const j = await r.json();
           redirectOnceRef.current = true;
           router.replace(routeForTier((j?.tier as Tier) || "demo"));
         } else {
           clearToken();
         }
       } catch {
-        // ignore; stay on page
+        /* ignore */
       }
     })();
   }, [router]);
@@ -51,25 +83,38 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      const res = await fetch(`${getApiBase()}/api/login`, {
+      const resp = await fetch(`${API_BASE}/api/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim(), password }),
       });
-      if (!res.ok) throw new Error((await res.text()) || "Login failed");
 
-      const data: any = await res.json();
-      const token: string | undefined = data?.access_token;
-      if (!token) throw new Error("No access token returned by server.");
-      saveToken(token);
+      const raw = await resp.text();
+      let data: any = {};
+      try { data = raw ? JSON.parse(raw) : {}; } catch {}
 
-      const p = await fetchWithAuth("/api/profile");
+      if (!resp.ok) {
+        clearToken();
+        throw new Error(
+          data?.detail || data?.message || raw || "Login failed. Please check your credentials."
+        );
+      }
+
+      const tok: string | undefined = data?.access_token;
+      if (!tok) {
+        clearToken();
+        throw new Error("No access token returned by server.");
+      }
+      saveToken(tok);
+
+      // resolve tier and route once
+      const p = await fetchProfileByToken(tok);
       if (p.ok) {
-        const j: any = await p.json();
-        router.push(routeForTier((j?.tier as Tier) || "demo"));
+        const j = await p.json();
+        router.replace(routeForTier((j?.tier as Tier) || "demo"));
       } else {
-        router.push("/dashboard");
+        router.replace("/dashboard");
       }
     } catch (err: any) {
       setError(err?.message ?? "Login failed");
@@ -98,7 +143,7 @@ export default function LoginPage() {
             />
           </div>
 
-        <div>
+          <div>
             <label className="block mb-1 text-sm text-neutral-300">Password</label>
             <input
               type="password"
