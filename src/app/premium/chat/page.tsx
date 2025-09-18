@@ -5,27 +5,35 @@ import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+/* ---------------- Config ---------------- */
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-backend.onrender.com";
 
+/* ---------------- Types ---------------- */
 type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
 type Me = { email: string; tier: Tier };
 
-type SessionItem = {
-  id: number;
-  title?: string;
-  created_at: string;
-};
+type SessionItem = { id: number; title?: string; created_at: string };
 
 type Msg = {
   id?: number;
   role: "user" | "assistant";
   content: string;
   created_at?: string;
-  attachments?: string[]; // local-only attachment names for user messages
+  attachments?: string[];
 };
 
+type LimitBanner = {
+  title?: string;
+  message?: string;
+  plan?: string;
+  used?: number;
+  limit?: number;
+  reset_at?: string;
+} | null;
+
+/* ---------------- Token helpers ---------------- */
 function readTokenSafe(): string {
   try {
     const ls = localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -36,18 +44,179 @@ function readTokenSafe(): string {
     return "";
   }
 }
-
 function logoutClient() {
   try {
     localStorage.removeItem("access_token");
     localStorage.removeItem("token");
-    // expire cookie named "token"
     document.cookie = "token=; Max-Age=0; path=/; SameSite=Lax";
   } catch {}
-  // hard redirect so all client state resets
   window.location.href = "/login";
 }
 
+/* ---------------- CXO parsing/rendering ---------------- */
+/** We accept headings with optional parentheses after the role:
+ *  ## CFO
+ *  ## CFO (Chief Financial Officer)
+ */
+const CXO_ORDER = ["CFO", "CHRO", "COO", "CMO", "CPO"] as const;
+const ROLE_FULL: Record<string, string> = {
+  CFO: "Chief Financial Officer",
+  CHRO: "Chief Human Resources Officer",
+  COO: "Chief Operating Officer",
+  CMO: "Chief Marketing Officer",
+  CPO: "Chief People Officer", // <- always People, never Product
+};
+
+const ROLE_RE = "(CFO|CHRO|COO|CMO|CPO)";
+const H2_CXO_REGEX = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i m");
+
+function looksLikeCXO(md: string) {
+  return H2_CXO_REGEX.test(md);
+}
+
+type CXOBlock = {
+  role: string;
+  insights: string[];
+  recs: string[];
+};
+
+function extractSection(body: string, label: string) {
+  const m = body.match(new RegExp(`^###\\s*${label}\\s*$([\\s\\S]*?)(?=^###\\s*\\w+|^##\\s+${ROLE_RE}|\\Z)`, "i m"));
+  return m ? (m[1] || "").trim() : "";
+}
+
+function extractListItems(text?: string): string[] {
+  if (!text) return [];
+  const cleaned = text.replace(/^[\s\S]*?(?=^\s*(?:\d+[.)]|[-*•])\s)/m, "");
+  return cleaned
+    .split(/\n(?=\s*(?:\d+[.)]|[-*•])\s)/g)
+    .map((p) => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim())
+    .filter(Boolean);
+}
+
+/** Robust CXO parser:
+ *  - walks headings like "## CFO" or "## CFO (Chief Financial Officer)"
+ *  - collects "### Insights" and "### Recommendations"
+ */
+function parseCXO(md: string): CXOBlock[] {
+  const lines = md.split("\n");
+  const sections: { role: string; start: number; end: number }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i"));
+    if (m) {
+      const role = (m[1] || "").toUpperCase();
+      // find where this section ends (next H2 role or end)
+      let j = i + 1;
+      for (; j < lines.length; j++) {
+        if (new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i").test(lines[j])) break;
+      }
+      // record (inclusive line indexes)
+      const start = i;
+      const end = j - 1;
+      sections.push({ role, start, end });
+      i = end;
+    }
+  }
+
+  const doc = md;
+  const out: CXOBlock[] = [];
+  for (const s of sections) {
+    const block = lines.slice(s.start, s.end + 1).join("\n");
+    const body = block.replace(new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i m"), "").trim();
+    const ins = extractListItems(extractSection(body, "Insights"));
+    const recs = extractListItems(extractSection(body, "Recommendations"));
+    out.push({ role: s.role, insights: ins, recs });
+  }
+  return out;
+}
+
+function InlineMD({ text }: { text: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ p: (props) => <span {...props} /> }}>
+      {text}
+    </ReactMarkdown>
+  );
+}
+
+function uniqStrings(items: string[]) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of items) {
+    const k = t.replace(/\s+/g, " ").trim().toLowerCase();
+    if (!seen.has(k) && t.trim()) {
+      seen.add(k);
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+/** New renderer:
+ *  - Top: Collective Insights (merged/deduped from all roles)
+ *  - Then: per-CXO Recommendations only (headlines limited by tier)
+ */
+function CXOMessage({ md, tier }: { md: string; tier: Tier }) {
+  const blocks = parseCXO(md);
+  const maxRecs =
+    tier === "admin" || tier === "premium" || tier === "pro_plus" ? 5 : tier === "demo" ? 1 : 3;
+
+  const collectiveInsights = uniqStrings(blocks.flatMap((b) => b.insights)).slice(0, 20); // cap to 20 to avoid super long pages
+
+  return (
+    <div className="space-y-4">
+      {/* Collective insights */}
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+        <h3 className="text-xl font-semibold flex items-center gap-2">
+          <span>🔎</span> <span>Insights</span>
+        </h3>
+        {collectiveInsights.length ? (
+          <ol className="mt-3 list-decimal pl-6 space-y-1">
+            {collectiveInsights.map((it, i) => (
+              <li key={i} className="leading-7">
+                <InlineMD text={it} />
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <div className="mt-2 text-sm opacity-70">No material evidence in the provided context.</div>
+        )}
+      </section>
+
+      {/* CXO Recommendations only */}
+      {CXO_ORDER.map((role) => {
+        const full = ROLE_FULL[role] || role;
+        const b = blocks.find((x) => x.role === role);
+        const recs = (b?.recs || []).slice(0, maxRecs);
+
+        return (
+          <section key={role} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+            <h3 className="text-xl font-semibold flex items-center gap-2">
+              <span>👤</span> <span>{role} ({full})</span>
+            </h3>
+
+            <div className="mt-3 text-sm font-semibold opacity-90 flex items-center gap-2">
+              <span>✅</span> <span>Recommendations</span>
+            </div>
+
+            {recs.length ? (
+              <ul className="mt-2 list-disc pl-6 space-y-1">
+                {recs.map((it, i) => (
+                  <li key={i} className="leading-7">
+                    <InlineMD text={it} />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="mt-2 text-sm opacity-70">No actionable data found.</div>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------------- Page ---------------- */
 export default function PremiumChatPage() {
   const [token, setToken] = useState<string>("");
   const [me, setMe] = useState<Me | null>(null);
@@ -110,7 +279,7 @@ export default function PremiumChatPage() {
 }
 
 /* =====================================================================================
-   CHAT UI — logout button + multi-file (Premium/Admin), single-file (Pro+), global DnD
+   CHAT UI — (same as before) multi-file for Premium/Admin, single-file for Pro+, placard
 ===================================================================================== */
 
 function ChatUI({
@@ -124,7 +293,7 @@ function ChatUI({
   me: Me;
   isAdmin: boolean;
   isProPlus: boolean;
-  isPremium: boolean; // premium OR admin
+  isPremium: boolean;
 }) {
   const [navOpen, setNavOpen] = useState<boolean>(true);
   const [sessions, setSessions] = useState<SessionItem[]>([]);
@@ -133,12 +302,11 @@ function ChatUI({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
 
-  // Multiple files (for composer)
   const [files, setFiles] = useState<File[]>([]);
   const maxFilesPerMessage = isPremium ? 8 : 1;
 
-  // Drag & drop state (global + composer)
   const [isDragging, setIsDragging] = useState(false);
+  const [banner, setBanner] = useState<LimitBanner>(null);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -155,9 +323,9 @@ function ChatUI({
 
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: 9e6, behavior: "smooth" });
-  }, [msgs, sending]);
+  }, [msgs, sending, banner]);
 
-  // ---------------- Global dropzone: drop anywhere to attach ----------------
+  // Global dropzone
   useEffect(() => {
     function onDragOver(e: DragEvent) {
       if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files")) {
@@ -170,8 +338,7 @@ function ChatUI({
       if (e.dataTransfer && e.dataTransfer.files?.length) {
         e.preventDefault();
         setIsDragging(false);
-        const dropped = Array.from(e.dataTransfer.files);
-        addFiles(dropped);
+        addFiles(Array.from(e.dataTransfer.files));
       }
     }
     function onDragLeave(e: DragEvent) {
@@ -236,21 +403,30 @@ function ChatUI({
     } catch {}
   }
 
+  function formatUtcShort(iso?: string) {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      const hh = String(d.getUTCHours()).padStart(2, "0");
+      const mm = String(d.getUTCMinutes()).padStart(2, "0");
+      return `${hh}:${mm} UTC`;
+    } catch { return ""; }
+  }
+
   async function send() {
     if (!input.trim() && files.length === 0) return;
     setSending(true);
+    setBanner(null);
 
-    // Snapshot names for display on the user bubble
     const attachedNames = files.map((f) => f.name);
     const userText = input.trim() || "(file only)";
 
-    // render immediately with attachments row (local-only)
     setMsgs((m) => [...m, { role: "user", content: userText, attachments: attachedNames }]);
 
     const fd = new FormData();
     fd.append("message", input.trim());
     if (active) fd.append("session_id", String(active));
-    files.forEach((f) => fd.append("files", f)); // multiple (or single for Pro+)
+    files.forEach((f) => fd.append("files", f));
 
     setInput("");
     setFiles([]);
@@ -261,12 +437,29 @@ function ChatUI({
         headers: { Authorization: `Bearer ${token}` },
         body: fd,
       });
+
+      if (r.status === 429) {
+        let j: any = {};
+        try { j = await r.json(); } catch {}
+        setBanner({
+          title: j?.title || "Daily chat limit reached",
+          message:
+            j?.message ||
+            (typeof j?.used === "number" && typeof j?.limit === "number"
+              ? `You've used ${j.used}/${j.limit} messages today.${j?.reset_at ? ` Resets at ${formatUtcShort(j.reset_at)}.` : ""}`
+              : "You've hit your daily chat limit."),
+          plan: j?.plan,
+          used: j?.used,
+          limit: j?.limit,
+          reset_at: j?.reset_at,
+        });
+        return;
+      }
+
       if (!r.ok) {
         const txt = await r.text().catch(() => "");
         const msg =
-          r.status === 429
-            ? "You've hit your daily message limit. Upgrade to Premium for unlimited."
-            : r.status === 403
+          r.status === 403
             ? "Pro+ can attach one file per message. Upgrade to Premium for multiple attachments."
             : "Sorry, I couldn't send that. Please try again.";
         setMsgs((m) => [...m, { role: "assistant", content: msg + (txt ? `\n\n${txt}` : "") }]);
@@ -279,7 +472,7 @@ function ChatUI({
         }
       }
     } catch {
-      setMsgs((m) => [...m, { role: "assistant", content: "Network error. Please try again." }]);
+      setMsgs((m) => [...m, { role: "assistant", content: "Network error. Please try again." }]]);
     } finally {
       setSending(false);
     }
@@ -359,26 +552,43 @@ function ChatUI({
             >
               {navOpen ? "Hide" : "Show"} sidebar
             </button>
-            <h1 className="text-base md:text-lg font-semibold truncate">{title}</h1>
+            <h1 className="text-base md:text-lg font-semibold truncate">
+              {useMemo(() => (sessions.find((x) => x.id === active)?.title || (active ? `Chat ${active}` : "New chat")), [sessions, active])}
+            </h1>
 
-            {/* spacer */}
             <div className="flex-1" />
 
-            {/* tier badge + logout */}
             <div className="flex items-center gap-2">
-              <span className="text-xs px-2 py-1 rounded bg-zinc-800 border border-zinc-700">
-                {me.tier.toUpperCase()}
-              </span>
-              <button
-                onClick={logoutClient}
-                className="px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-sm"
-                title="Log out"
-              >
+              <span className="text-xs px-2 py-1 rounded bg-zinc-800 border border-zinc-700">{me.tier.toUpperCase()}</span>
+              <button onClick={logoutClient} className="px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-sm" title="Log out">
                 Log out
               </button>
             </div>
           </div>
         </header>
+
+        {/* Banner (Pro+ daily limit) */}
+        {banner && (
+          <div className="mx-auto max-w-3xl px-4 pt-4">
+            <div className="rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 p-4 text-fuchsia-100">
+              <div className="font-semibold">{banner.title || "Daily chat limit reached"}</div>
+              <div className="text-sm mt-1">
+                {banner.message ||
+                  `You've used ${banner.used ?? "—"}/${banner.limit ?? "—"} messages today.${
+                    banner.reset_at ? ` Resets at ${formatUtcShort(banner.reset_at)}.` : ""
+                  }`}
+              </div>
+              <div className="mt-2 flex gap-2">
+                <a href="/payments" className="rounded-md bg-fuchsia-600 px-3 py-1 text-white hover:bg-fuchsia-500">
+                  Upgrade to Premium
+                </a>
+                <button onClick={() => setBanner(null)} className="text-xs underline">
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Messages */}
         <div ref={scrollerRef} className="overflow-auto">
@@ -392,7 +602,6 @@ function ChatUI({
             {msgs.map((m, i) => {
               const isUser = m.role === "user";
               if (isUser) {
-                // Right-aligned bubble, ~75% width, with attachment chips above message
                 return (
                   <article key={i} className="flex">
                     <div className="ml-auto max-w-[75%]">
@@ -409,22 +618,26 @@ function ChatUI({
                         </div>
                       )}
                       <div className="bg-blue-600/15 text-blue-100 border border-blue-500/30 rounded-2xl">
-                        <div className="px-4 py-3 whitespace-pre-wrap text-[16px] leading-7">
-                          {m.content}
-                        </div>
+                        <div className="px-4 py-3 whitespace-pre-wrap text-[16px] leading-7">{m.content}</div>
                       </div>
                     </div>
                   </article>
                 );
               }
-              // Assistant: full-width, no border, nice rhythm
+
+              // Assistant: new CXO renderer (collective insights first, then CXO recommendations)
+              const showCXO = looksLikeCXO(m.content);
               return (
                 <article key={i} className="flex">
                   <div className="w-full">
                     <div className="px-1">
-                      <div className="prose prose-invert max-w-none text-[16px] leading-7">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                      </div>
+                      {showCXO ? (
+                        <CXOMessage md={m.content} tier={me.tier} />
+                      ) : (
+                        <div className="prose prose-invert max-w-none text-[16px] leading-7">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </article>
@@ -436,6 +649,7 @@ function ChatUI({
         {/* Composer */}
         <footer className="border-t border-zinc-800 bg-[rgb(14,19,32)]">
           <div className="mx-auto max-w-4xl px-4 py-3">
+            {/* Selected files */}
             {!!files.length && (
               <div className="mb-3 flex flex-wrap gap-2 text-xs">
                 {files.map((f, idx) => (
@@ -461,6 +675,7 @@ function ChatUI({
               </div>
             )}
 
+            {/* Input row / local drop target */}
             <div
               onDragOver={(e) => {
                 e.preventDefault();
@@ -478,8 +693,7 @@ function ChatUI({
               onDrop={(e) => {
                 e.preventDefault();
                 setIsDragging(false);
-                const dropped = Array.from(e.dataTransfer.files || []);
-                addFiles(dropped);
+                addFiles(Array.from(e.dataTransfer.files || []));
               }}
               className={`flex items-center gap-2 ${isDragging ? "ring-2 ring-blue-500/40 rounded-lg p-2" : ""}`}
             >
@@ -499,7 +713,7 @@ function ChatUI({
               <input
                 ref={fileRef}
                 type="file"
-                multiple={isPremium} // Premium/Admin can pick multiple
+                multiple={isPremium}
                 className="hidden"
                 onChange={(e) => addFiles(Array.from(e.target.files || []))}
               />
@@ -525,7 +739,7 @@ function ChatUI({
         {isDragging && (
           <div className="pointer-events-none fixed inset-0 flex items-center justify-center">
             <div className="rounded-2xl border-2 border-dashed border-blue-400/60 bg-zinc-900/70 px-6 py-4 text-sm">
-              Drop file{isPremium ? "s" : ""} to attach {isPremium ? "(up to 8)" : "(1 for Pro+)"}
+              Drop file{isPremium ? "s" : ""} to attach {isPremium ? "(up to 8)" : "(1 for Pro+)"}.
             </div>
           </div>
         )}
