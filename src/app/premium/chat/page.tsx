@@ -33,7 +33,7 @@ type LimitBanner = {
   reset_at?: string;
 } | null;
 
-/* ---------------- Token helpers ---------------- */
+/* ---------------- Token + network helpers ---------------- */
 function readTokenSafe(): string {
   try {
     const ls = localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -57,6 +57,36 @@ function logoutClient() {
   window.location.href = "/login";
 }
 
+async function fetchText(res: Response) {
+  try {
+    return await res.text();
+  } catch {
+    return "";
+  }
+}
+
+// Ping /api/ready with a short timeout + small backoff (max ~6–8s)
+async function ensureBackendReady(base: string): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2500);
+  try {
+    const r = await fetch(`${base}/api/ready`, { signal: controller.signal, cache: "no-store" });
+    clearTimeout(timeout);
+    if (!r.ok) throw new Error(`ready ${r.status}`);
+    return;
+  } catch {
+    clearTimeout(timeout);
+    for (let i = 0; i < 3; i++) {
+      await new Promise((res) => setTimeout(res, 1000 + i * 800));
+      try {
+        const r2 = await fetch(`${base}/api/ready`, { cache: "no-store" });
+        if (r2.ok) return;
+      } catch {}
+    }
+    throw new Error("backend not ready");
+  }
+}
+
 /* ---------------- CXO parsing/rendering ---------------- */
 const CXO_ORDER = ["CFO", "CHRO", "COO", "CMO", "CPO"] as const;
 const ROLE_FULL: Record<string, string> = {
@@ -64,7 +94,7 @@ const ROLE_FULL: Record<string, string> = {
   CHRO: "Chief Human Resources Officer",
   COO: "Chief Operating Officer",
   CMO: "Chief Marketing Officer",
-  CPO: "Chief People Officer", // always People, never Product
+  CPO: "Chief People Officer",
 };
 
 const ROLE_RE = "(CFO|CHRO|COO|CMO|CPO)";
@@ -151,7 +181,7 @@ function uniqStrings(items: string[]) {
 }
 
 /** Renderer:
- *  - Top: Collective Insights (merged/deduped)
+ *  - Top: Collective Insights
  *  - Then: per-CXO Recommendations only (tier-limited)
  */
 function CXOMessage({ md, tier }: { md: string; tier: Tier }) {
@@ -371,13 +401,28 @@ function ChatUI({
     });
   }
 
+  /* ---------------- Sessions / History with adaptive methods (avoid 405) ---------------- */
   async function loadSessions() {
     try {
-      const r = await fetch(`${API_BASE}/api/chat/sessions`, {
-        headers: authHeaders(),
+      await ensureBackendReady(API_BASE);
+
+      // Try POST first; if 405, retry with GET.
+      let r = await fetch(`${API_BASE}/api/chat/sessions`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({}),
         cache: "no-store",
       });
-      if (r.status === 401) return;
+
+      if (r.status === 405) {
+        r = await fetch(`${API_BASE}/api/chat/sessions`, {
+          method: "GET",
+          headers: authHeaders(),
+          cache: "no-store",
+        });
+      }
+
+      if (!r.ok) throw new Error(`${r.status}: ${await fetchText(r)}`);
       const j = await r.json();
       const list: SessionItem[] = Array.isArray(j) ? j : (j.sessions || []);
       setSessions(list);
@@ -385,19 +430,35 @@ function ChatUI({
         setActive(list[0].id);
         await loadHistory(list[0].id);
       }
-    } catch {}
+    } catch (e) {
+      setMsgs((m) => [
+        ...m,
+        { role: "assistant", content: `Couldn’t load sessions.\n\n${String((e as Error)?.message || e)}` },
+      ]);
+    }
   }
 
   async function loadHistory(sessionId: number) {
     try {
-      const r = await fetch(`${API_BASE}/api/chat/history?session_id=${sessionId}`, {
+      await ensureBackendReady(API_BASE);
+
+      // Try GET first; if 405, retry with POST JSON.
+      let r = await fetch(`${API_BASE}/api/chat/history?session_id=${sessionId}`, {
+        method: "GET",
         headers: authHeaders(),
         cache: "no-store",
       });
-      if (!r.ok) {
-        setMsgs([]);
-        return;
+
+      if (r.status === 405) {
+        r = await fetch(`${API_BASE}/api/chat/history`, {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ session_id: sessionId }),
+          cache: "no-store",
+        });
       }
+
+      if (!r.ok) throw new Error(`${r.status}: ${await fetchText(r)}`);
       const j = await r.json();
       const items: Msg[] = (j.messages || []).map((m: any) => ({
         id: m.id,
@@ -406,21 +467,15 @@ function ChatUI({
         created_at: m.created_at,
       }));
       setMsgs(items);
-    } catch {}
-  }
-
-  function formatUtcShort(iso?: string) {
-    if (!iso) return "";
-    try {
-      const d = new Date(iso);
-      const hh = String(d.getUTCHours()).padStart(2, "0");
-      const mm = String(d.getUTCMinutes()).padStart(2, "0");
-      return `${hh}:${mm} UTC`;
-    } catch {
-      return "";
+    } catch (e) {
+      setMsgs((m) => [
+        ...m,
+        { role: "assistant", content: `Couldn’t load history.\n\n${String((e as Error)?.message || e)}` },
+      ]);
     }
   }
 
+  /* ---------------- Send ---------------- */
   async function send() {
     if (!input.trim() && files.length === 0) return;
     setSending(true);
@@ -440,12 +495,15 @@ function ChatUI({
     setFiles([]);
 
     try {
+      await ensureBackendReady(API_BASE);
+
       const r = await fetch(`${API_BASE}/api/chat/send`, {
         method: "POST",
         headers: authHeaders(), // Authorization only; do not set Content-Type for FormData
         body: fd,
       });
 
+      // daily limit
       if (r.status === 429) {
         let j: any = {};
         try {
@@ -456,9 +514,8 @@ function ChatUI({
           message:
             j?.message ||
             (typeof j?.used === "number" && typeof j?.limit === "number"
-              ? `You've used ${j.used}/${j.limit} messages today.${
-                  j?.reset_at ? ` Resets at ${formatUtcShort(j.reset_at)}.` : ""
-                }`
+              ? `You've used ${j.used}/${j.limit} messages today.` +
+                (j?.reset_at ? ` Resets at ${formatUtcShort(j.reset_at)}.` : "")
               : "You've hit your daily chat limit."),
           plan: j?.plan,
           used: j?.used,
@@ -469,28 +526,54 @@ function ChatUI({
       }
 
       if (!r.ok) {
-        const txt = await r.text().catch(() => "");
-        const msg =
-          r.status === 403
+        const body = await fetchText(r);
+        const friendly =
+          r.status === 413
+            ? "File too large for your plan."
+            : r.status === 415
+            ? "Unsupported file type."
+            : r.status === 403
             ? "Pro+ can attach one file per message. Upgrade to Premium for multiple attachments."
-            : "Sorry, I couldn't send that. Please try again.";
-        setMsgs((m) => [...m, { role: "assistant", content: msg + (txt ? `\n\n${txt}` : "") }]);
+            : "The server couldn’t process the request.";
+        setMsgs((m) => [
+          ...m,
+          {
+            role: "assistant",
+            content: `${friendly}\n\n**Error ${r.status}:** ${body || "(no details)"}`,
+          },
+        ]);
       } else {
         const j = await r.json();
         if (!active && j?.session_id) setActive(j.session_id);
         const assistantText =
           j?.assistant?.content ?? j?.assistant ?? j?.assistant_message ?? "OK.";
         setMsgs((m) => [...m, { role: "assistant", content: assistantText }]);
-        // refresh sessions if new
-        setSessions((prev) => (prev.find((s) => s.id === (j?.session_id || active)) ? prev : prev));
         if (j?.session_id && !sessions.find((s) => s.id === j.session_id)) {
           loadSessions();
         }
       }
-    } catch {
-      setMsgs((m) => [...m, { role: "assistant", content: "Network error. Please try again." }]);
+    } catch (err: any) {
+      setMsgs((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: `Network error. Please try again.\n\n${String(err?.message || err)}`,
+        },
+      ]);
     } finally {
       setSending(false);
+    }
+  }
+
+  function formatUtcShort(iso?: string) {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      const hh = String(d.getUTCHours()).padStart(2, "0");
+      const mm = String(d.getUTCMinutes()).padStart(2, "0");
+      return `${hh}:${mm} UTC`;
+    } catch {
+      return "";
     }
   }
 
