@@ -54,21 +54,17 @@ function logoutClient() {
 }
 
 /* ---------------- CXO parsing/rendering ---------------- */
-/** We accept headings with optional parentheses after the role:
- *  ## CFO
- *  ## CFO (Chief Financial Officer)
- */
 const CXO_ORDER = ["CFO", "CHRO", "COO", "CMO", "CPO"] as const;
 const ROLE_FULL: Record<string, string> = {
   CFO: "Chief Financial Officer",
   CHRO: "Chief Human Resources Officer",
   COO: "Chief Operating Officer",
   CMO: "Chief Marketing Officer",
-  CPO: "Chief People Officer", // <- always People, never Product
+  CPO: "Chief People Officer", // always People, never Product
 };
 
 const ROLE_RE = "(CFO|CHRO|COO|CMO|CPO)";
-const H2_CXO_REGEX = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i m");
+const H2_CXO_REGEX = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "im");
 
 function looksLikeCXO(md: string) {
   return H2_CXO_REGEX.test(md);
@@ -81,7 +77,12 @@ type CXOBlock = {
 };
 
 function extractSection(body: string, label: string) {
-  const m = body.match(new RegExp(`^###\\s*${label}\\s*$([\\s\\S]*?)(?=^###\\s*\\w+|^##\\s+${ROLE_RE}|\\Z)`, "i m"));
+  // capture from "### <label>" to the next "### ..." or next "## <ROLE>" or EOF
+  const re = new RegExp(
+    `^###\\s*${label}\\s*$([\\s\\S]*?)(?=^###\\s*\\w+|^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$|\\Z)`,
+    "im"
+  );
+  const m = body.match(re);
   return m ? (m[1] || "").trim() : "";
 }
 
@@ -94,35 +95,29 @@ function extractListItems(text?: string): string[] {
     .filter(Boolean);
 }
 
-/** Robust CXO parser:
- *  - walks headings like "## CFO" or "## CFO (Chief Financial Officer)"
- *  - collects "### Insights" and "### Recommendations"
- */
 function parseCXO(md: string): CXOBlock[] {
   const lines = md.split("\n");
   const sections: { role: string; start: number; end: number }[] = [];
+
+  const h2Re = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i");
+
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i"));
+    const m = lines[i].match(h2Re);
     if (m) {
       const role = (m[1] || "").toUpperCase();
-      // find where this section ends (next H2 role or end)
       let j = i + 1;
       for (; j < lines.length; j++) {
-        if (new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i").test(lines[j])) break;
+        if (h2Re.test(lines[j])) break;
       }
-      // record (inclusive line indexes)
-      const start = i;
-      const end = j - 1;
-      sections.push({ role, start, end });
-      i = end;
+      sections.push({ role, start: i, end: j - 1 });
+      i = j - 1;
     }
   }
 
-  const doc = md;
   const out: CXOBlock[] = [];
   for (const s of sections) {
     const block = lines.slice(s.start, s.end + 1).join("\n");
-    const body = block.replace(new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i m"), "").trim();
+    const body = block.replace(h2Re, "").trim();
     const ins = extractListItems(extractSection(body, "Insights"));
     const recs = extractListItems(extractSection(body, "Recommendations"));
     out.push({ role: s.role, insights: ins, recs });
@@ -151,16 +146,16 @@ function uniqStrings(items: string[]) {
   return out;
 }
 
-/** New renderer:
- *  - Top: Collective Insights (merged/deduped from all roles)
- *  - Then: per-CXO Recommendations only (headlines limited by tier)
+/** Renderer:
+ *  - Top: Collective Insights (merged/deduped)
+ *  - Then: per-CXO Recommendations only (tier-limited)
  */
 function CXOMessage({ md, tier }: { md: string; tier: Tier }) {
   const blocks = parseCXO(md);
   const maxRecs =
     tier === "admin" || tier === "premium" || tier === "pro_plus" ? 5 : tier === "demo" ? 1 : 3;
 
-  const collectiveInsights = uniqStrings(blocks.flatMap((b) => b.insights)).slice(0, 20); // cap to 20 to avoid super long pages
+  const collectiveInsights = uniqStrings(blocks.flatMap((b) => b.insights)).slice(0, 20);
 
   return (
     <div className="space-y-4">
@@ -279,7 +274,7 @@ export default function PremiumChatPage() {
 }
 
 /* =====================================================================================
-   CHAT UI — (same as before) multi-file for Premium/Admin, single-file for Pro+, placard
+   CHAT UI — multi-file for Premium/Admin, single-file for Pro+, with limit placard
 ===================================================================================== */
 
 function ChatUI({
@@ -311,11 +306,6 @@ function ChatUI({
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  const title = useMemo(() => {
-    const s = sessions.find((x) => x.id === active);
-    return s?.title || (active ? `Chat ${active}` : "New chat");
-  }, [sessions, active]);
-
   useEffect(() => {
     loadSessions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -327,33 +317,40 @@ function ChatUI({
 
   // Global dropzone
   useEffect(() => {
-    function onDragOver(e: DragEvent) {
+    const onDragOver = (e: DragEvent) => {
       if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files")) {
         e.preventDefault();
         e.dataTransfer.dropEffect = "copy";
         setIsDragging(true);
       }
-    }
-    function onDrop(e: DragEvent) {
-      if (e.dataTransfer && e.dataTransfer.files?.length) {
+    };
+
+    const onDrop = (e: DragEvent) => {
+      if (e.dataTransfer?.files?.length) {
         e.preventDefault();
         setIsDragging(false);
-        addFiles(Array.from(e.dataTransfer.files));
+        const incoming = Array.from(e.dataTransfer.files);
+        // functional update avoids stale closure, and we cap by maxFilesPerMessage
+        setFiles(prev => prev.concat(incoming).slice(0, maxFilesPerMessage));
       }
-    }
-    function onDragLeave(e: DragEvent) {
+    };
+
+    const onDragLeave = (e: DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
-    }
+    };
+
     window.addEventListener("dragover", onDragOver);
     window.addEventListener("drop", onDrop);
     window.addEventListener("dragleave", onDragLeave);
+
     return () => {
       window.removeEventListener("dragover", onDragOver);
       window.removeEventListener("drop", onDrop);
       window.removeEventListener("dragleave", onDragLeave);
     };
-  }, [files, isPremium]);
+  }, [maxFilesPerMessage]);
+
 
   function addFiles(incoming: File[]) {
     const merged = [...files, ...incoming];
@@ -410,7 +407,9 @@ function ChatUI({
       const hh = String(d.getUTCHours()).padStart(2, "0");
       const mm = String(d.getUTCMinutes()).padStart(2, "0");
       return `${hh}:${mm} UTC`;
-    } catch { return ""; }
+    } catch {
+      return "";
+    }
   }
 
   async function send() {
@@ -440,7 +439,9 @@ function ChatUI({
 
       if (r.status === 429) {
         let j: any = {};
-        try { j = await r.json(); } catch {}
+        try {
+          j = await r.json();
+        } catch {}
         setBanner({
           title: j?.title || "Daily chat limit reached",
           message:
@@ -553,7 +554,10 @@ function ChatUI({
               {navOpen ? "Hide" : "Show"} sidebar
             </button>
             <h1 className="text-base md:text-lg font-semibold truncate">
-              {useMemo(() => (sessions.find((x) => x.id === active)?.title || (active ? `Chat ${active}` : "New chat")), [sessions, active])}
+              {useMemo(
+                () => sessions.find((x) => x.id === active)?.title || (active ? `Chat ${active}` : "New chat"),
+                [sessions, active]
+              )}
             </h1>
 
             <div className="flex-1" />
@@ -625,7 +629,6 @@ function ChatUI({
                 );
               }
 
-              // Assistant: new CXO renderer (collective insights first, then CXO recommendations)
               const showCXO = looksLikeCXO(m.content);
               return (
                 <article key={i} className="flex">
@@ -649,7 +652,6 @@ function ChatUI({
         {/* Composer */}
         <footer className="border-t border-zinc-800 bg-[rgb(14,19,32)]">
           <div className="mx-auto max-w-4xl px-4 py-3">
-            {/* Selected files */}
             {!!files.length && (
               <div className="mb-3 flex flex-wrap gap-2 text-xs">
                 {files.map((f, idx) => (
@@ -675,7 +677,6 @@ function ChatUI({
               </div>
             )}
 
-            {/* Input row / local drop target */}
             <div
               onDragOver={(e) => {
                 e.preventDefault();
@@ -735,7 +736,6 @@ function ChatUI({
           </div>
         </footer>
 
-        {/* Global drop overlay hint */}
         {isDragging && (
           <div className="pointer-events-none fixed inset-0 flex items-center justify-center">
             <div className="rounded-2xl border-2 border-dashed border-blue-400/60 bg-zinc-900/70 px-6 py-4 text-sm">
