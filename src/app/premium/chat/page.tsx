@@ -472,7 +472,7 @@ function ChatUI({
         }
       }
     } catch {
-      setMsgs((m) => [...m, { role: "assistant", content: "Network error. Please try again." }]]);
+      setMsgs((m) => [...m, { role: "assistant", content: "Network error. Please try again." }]);
     } finally {
       setSending(false);
     }
