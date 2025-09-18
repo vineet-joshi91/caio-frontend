@@ -1,246 +1,724 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
-type Role = "user" | "assistant" | "system";
-type Msg = { role: Role; content: string };
+/* ---------------- Config ---------------- */
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
+  "https://caio-backend.onrender.com";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "https://caio-backend.onrender.com";
+/* ---------------- Types ---------------- */
+type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
+type Me = { email: string; tier: Tier };
 
-// tiny markdown renderer for bullets/headers only (safe & SSR friendly)
-function Markdown({ text }: { text: string }) {
-  // very light transform: headers + list bullets
-  const html = useMemo(() => {
-    const esc = (s: string) =>
-      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const lines = text.split(/\r?\n/);
-    const out: string[] = [];
-    for (const ln of lines) {
-      if (/^#{1,6}\s/.test(ln)) {
-        const level = ln.match(/^#+/)![0].length;
-        out.push(`<h${level}>${esc(ln.replace(/^#{1,6}\s*/, ""))}</h${level}>`);
-      } else if (/^\d+\.\s/.test(ln)) {
-        // leave ordered items as plain paragraphs; we’ll group with <p>
-        out.push(`<p>${esc(ln)}</p>`);
-      } else if (/^\s*$/.test(ln)) {
-        out.push("<br/>");
-      } else {
-        out.push(`<p>${esc(ln)}</p>`);
-      }
-    }
-    return out.join("\n");
-  }, [text]);
-  // eslint-disable-next-line react/no-danger
-  return <div className="prose prose-invert" dangerouslySetInnerHTML={{ __html: html }} />;
+type SessionItem = { id: number; title?: string; created_at: string };
+
+type Msg = {
+  id?: number;
+  role: "user" | "assistant";
+  content: string;
+  created_at?: string;
+  attachments?: string[];
+};
+
+type LimitBanner = {
+  title?: string;
+  message?: string;
+  plan?: string;
+  used?: number;
+  limit?: number;
+  reset_at?: string;
+} | null;
+
+/* ---------------- Token helpers ---------------- */
+function readTokenSafe(): string {
+  try {
+    const ls = localStorage.getItem("access_token") || localStorage.getItem("token") || "";
+    if (ls) return ls;
+    const m = document.cookie.match(/(?:^|;)\s*token=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : "";
+  } catch {
+    return "";
+  }
+}
+function authHeaders(extra?: HeadersInit): HeadersInit {
+  const t = readTokenSafe();
+  return t ? { ...(extra || {}), Authorization: `Bearer ${t}` } : (extra || {});
+}
+function logoutClient() {
+  try {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("token");
+    document.cookie = "token=; Max-Age=0; path=/; SameSite=Lax";
+  } catch {}
+  window.location.href = "/login";
 }
 
-export default function PremiumChatPage() {
-  const [sessions, setSessions] = useState<{ id: number; created_at?: string | null }[]>([]);
-  const [sessionId, setSessionId] = useState<number | null>(null);
-  const [msgs, setMsgs] = useState<Msg[]>([]);
-  const [text, setText] = useState("");
-  const [sending, setSending] = useState(false);
+/* ---------------- CXO parsing/rendering ---------------- */
+const CXO_ORDER = ["CFO", "CHRO", "COO", "CMO", "CPO"] as const;
+const ROLE_FULL: Record<string, string> = {
+  CFO: "Chief Financial Officer",
+  CHRO: "Chief Human Resources Officer",
+  COO: "Chief Operating Officer",
+  CMO: "Chief Marketing Officer",
+  CPO: "Chief People Officer", // always People, never Product
+};
 
-  // drag & files
-  const [isDragging, setIsDragging] = useState(false);
-  const [files, setFiles] = useState<File[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const maxFilesPerMessage = 5;
+const ROLE_RE = "(CFO|CHRO|COO|CMO|CPO)";
+const H2_CXO_REGEX = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "im");
 
-  // ----- helpers -----
-  const safeFetchJson = useCallback(async (url: string, init?: RequestInit) => {
-    const res = await fetch(url, { credentials: "include", ...init });
-    if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      throw new Error(`${res.status}: ${t || "Request failed"}`);
+function looksLikeCXO(md: string) {
+  return H2_CXO_REGEX.test(md);
+}
+
+type CXOBlock = {
+  role: string;
+  insights: string[];
+  recs: string[];
+};
+
+function extractSection(body: string, label: string) {
+  // capture from "### <label>" to the next "### ..." or next "## <ROLE>" or EOF
+  const re = new RegExp(
+    `^###\\s*${label}\\s*$([\\s\\S]*?)(?=^###\\s*\\w+|^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$|\\Z)`,
+    "im"
+  );
+  const m = body.match(re);
+  return m ? (m[1] || "").trim() : "";
+}
+
+function extractListItems(text?: string): string[] {
+  if (!text) return [];
+  const cleaned = text.replace(/^[\s\S]*?(?=^\s*(?:\d+[.)]|[-*•])\s)/m, "");
+  return cleaned
+    .split(/\n(?=\s*(?:\d+[.)]|[-*•])\s)/g)
+    .map((p) => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim())
+    .filter(Boolean);
+}
+
+function parseCXO(md: string): CXOBlock[] {
+  const lines = md.split("\n");
+  const sections: { role: string; start: number; end: number }[] = [];
+
+  const h2Re = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i");
+
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(h2Re);
+    if (m) {
+      const role = (m[1] || "").toUpperCase();
+      let j = i + 1;
+      for (; j < lines.length; j++) {
+        if (h2Re.test(lines[j])) break;
+      }
+      sections.push({ role, start: i, end: j - 1 });
+      i = j - 1;
     }
-    return res.json();
-  }, []);
+  }
 
-  // load sessions
+  const out: CXOBlock[] = [];
+  for (const s of sections) {
+    const block = lines.slice(s.start, s.end + 1).join("\n");
+    const body = block.replace(h2Re, "").trim();
+    const ins = extractListItems(extractSection(body, "Insights"));
+    const recs = extractListItems(extractSection(body, "Recommendations"));
+    out.push({ role: s.role, insights: ins, recs });
+  }
+  return out;
+}
+
+function InlineMD({ text }: { text: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ p: (props) => <span {...props} /> }}>
+      {text}
+    </ReactMarkdown>
+  );
+}
+
+function uniqStrings(items: string[]) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of items) {
+    const k = t.replace(/\s+/g, " ").trim().toLowerCase();
+    if (!seen.has(k) && t.trim()) {
+      seen.add(k);
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+/** Renderer:
+ *  - Top: Collective Insights (merged/deduped)
+ *  - Then: per-CXO Recommendations only (tier-limited)
+ */
+function CXOMessage({ md, tier }: { md: string; tier: Tier }) {
+  const blocks = parseCXO(md);
+  const maxRecs =
+    tier === "admin" || tier === "premium" || tier === "pro_plus" ? 5 : tier === "demo" ? 1 : 3;
+
+  const collectiveInsights = uniqStrings(blocks.flatMap((b) => b.insights)).slice(0, 20);
+
+  return (
+    <div className="space-y-4">
+      {/* Collective insights */}
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+        <h3 className="text-xl font-semibold flex items-center gap-2">
+          <span>🔎</span> <span>Insights</span>
+        </h3>
+        {collectiveInsights.length ? (
+          <ol className="mt-3 list-decimal pl-6 space-y-1">
+            {collectiveInsights.map((it, i) => (
+              <li key={i} className="leading-7">
+                <InlineMD text={it} />
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <div className="mt-2 text-sm opacity-70">No material evidence in the provided context.</div>
+        )}
+      </section>
+
+      {/* CXO Recommendations only */}
+      {CXO_ORDER.map((role) => {
+        const full = ROLE_FULL[role] || role;
+        const b = blocks.find((x) => x.role === role);
+        const recs = (b?.recs || []).slice(0, maxRecs);
+
+        return (
+          <section key={role} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+            <h3 className="text-xl font-semibold flex items-center gap-2">
+              <span>👤</span> <span>
+                {role} ({full})
+              </span>
+            </h3>
+
+            <div className="mt-3 text-sm font-semibold opacity-90 flex items-center gap-2">
+              <span>✅</span> <span>Recommendations</span>
+            </div>
+
+            {recs.length ? (
+              <ul className="mt-2 list-disc pl-6 space-y-1">
+                {recs.map((it, i) => (
+                  <li key={i} className="leading-7">
+                    <InlineMD text={it} />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="mt-2 text-sm opacity-70">No actionable data found.</div>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------------- Page ---------------- */
+export default function PremiumChatPage() {
+  const [token, setToken] = useState<string>("");
+  const [me, setMe] = useState<Me | null>(null);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
-    let alive = true;
+    const t = readTokenSafe();
+    setToken(t);
+    if (!t) {
+      setLoading(false);
+      return;
+    }
     (async () => {
       try {
-        const data = await safeFetchJson(`${API_BASE}/api/chat/sessions`);
-        if (!alive) return;
-        const list = (data?.sessions ?? []) as any[];
-        setSessions(list);
-        if (!sessionId && list.length) {
-          setSessionId(list[0].id);
+        const r = await fetch(`${API_BASE}/api/profile`, {
+          headers: authHeaders(),
+          cache: "no-store",
+        });
+        if (r.status === 401) {
+          setMe(null);
+        } else {
+          const j = await r.json();
+          setMe({ email: j.email, tier: (j.tier || "demo") as Tier });
         }
-      } catch (e) {
-        // don’t crash the page; just show a soft message
-        console.warn("sessions load failed", e);
+      } catch {
+        setMe(null);
+      } finally {
+        setLoading(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
-  }, [safeFetchJson, sessionId]);
+  }, []);
 
-  // ----- file attach -----
-  function onDragEnter(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    setIsDragging(true);
+  if (loading) return <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">Loading…</main>;
+  if (!me) return <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">Please log in.</main>;
+
+  if (!(me.tier === "admin" || me.tier === "premium" || me.tier === "pro_plus")) {
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
+        <div className="max-w-2xl mx-auto space-y-4">
+          <h1 className="text-2xl font-semibold">Premium Chat</h1>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
+            <p className="text-sm">
+              Chat is a <b>Premium</b> feature. Your current tier is <b>{me.tier}</b>.{" "}
+              <Link href="/payments" className="underline text-blue-300 hover:text-blue-200">
+                Upgrade to request access
+              </Link>
+              .
+            </p>
+          </div>
+        </div>
+      </main>
+    );
   }
-  function onDragOver(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    if (!isDragging) setIsDragging(true);
+
+  return (
+    <ChatUI
+      token={token}
+      me={me}
+      isAdmin={me.tier === "admin"}
+      isProPlus={me.tier === "pro_plus"}
+      isPremium={me.tier === "premium" || me.tier === "admin"}
+    />
+  );
+}
+
+/* =====================================================================================
+   CHAT UI — multi-file for Premium/Admin, single-file for Pro+, with limit placard
+===================================================================================== */
+
+function ChatUI({
+  token,
+  me,
+  isAdmin,
+  isProPlus,
+  isPremium,
+}: {
+  token: string;
+  me: Me;
+  isAdmin: boolean;
+  isProPlus: boolean;
+  isPremium: boolean;
+}) {
+  const [navOpen, setNavOpen] = useState<boolean>(true);
+  const [sessions, setSessions] = useState<SessionItem[]>([]);
+  const [active, setActive] = useState<number | null>(null);
+  const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const [files, setFiles] = useState<File[]>([]);
+  const maxFilesPerMessage = isPremium ? 8 : 1;
+
+  const [isDragging, setIsDragging] = useState(false);
+  const [banner, setBanner] = useState<LimitBanner>(null);
+
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    loadSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    scrollerRef.current?.scrollTo({ top: 9e6, behavior: "smooth" });
+  }, [msgs, sending, banner]);
+
+  // Global dropzone
+  useEffect(() => {
+    const onDragOver = (e: DragEvent) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files")) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        setIsDragging(true);
+      }
+    };
+
+    const onDrop = (e: DragEvent) => {
+      if (e.dataTransfer?.files?.length) {
+        e.preventDefault();
+        setIsDragging(false);
+        const incoming = Array.from(e.dataTransfer.files);
+        setFiles((prev) => prev.concat(incoming).slice(0, maxFilesPerMessage));
+      }
+    };
+
+    const onDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+    };
+
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("drop", onDrop);
+    window.addEventListener("dragleave", onDragLeave);
+
+    return () => {
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("drop", onDrop);
+      window.removeEventListener("dragleave", onDragLeave);
+    };
+  }, [maxFilesPerMessage]);
+
+  function addFiles(incoming: File[]) {
+    setFiles((prev) => [...prev, ...incoming].slice(0, maxFilesPerMessage));
   }
-  function onDragLeave(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    setIsDragging(false);
+  function removeFile(idx: number) {
+    setFiles((prev) => {
+      const copy = prev.slice();
+      copy.splice(idx, 1);
+      return copy;
+    });
   }
-  function onDrop(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer?.files?.length) {
-      setFiles((prev) => {
-        const merged = [...prev, ...Array.from(e.dataTransfer.files)];
-        return merged.slice(0, maxFilesPerMessage);
+
+  async function loadSessions() {
+    try {
+      const r = await fetch(`${API_BASE}/api/chat/sessions`, {
+        headers: authHeaders(),
+        cache: "no-store",
       });
+      if (r.status === 401) return;
+      const j = await r.json();
+      const list: SessionItem[] = Array.isArray(j) ? j : (j.sessions || []);
+      setSessions(list);
+      if (!active && list.length) {
+        setActive(list[0].id);
+        await loadHistory(list[0].id);
+      }
+    } catch {}
+  }
+
+  async function loadHistory(sessionId: number) {
+    try {
+      const r = await fetch(`${API_BASE}/api/chat/history?session_id=${sessionId}`, {
+        headers: authHeaders(),
+        cache: "no-store",
+      });
+      if (!r.ok) {
+        setMsgs([]);
+        return;
+      }
+      const j = await r.json();
+      const items: Msg[] = (j.messages || []).map((m: any) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        created_at: m.created_at,
+      }));
+      setMsgs(items);
+    } catch {}
+  }
+
+  function formatUtcShort(iso?: string) {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      const hh = String(d.getUTCHours()).padStart(2, "0");
+      const mm = String(d.getUTCMinutes()).padStart(2, "0");
+      return `${hh}:${mm} UTC`;
+    } catch {
+      return "";
     }
   }
-  function onPickFiles(ev: React.ChangeEvent<HTMLInputElement>) {
-    const f = Array.from(ev.target.files ?? []);
-    setFiles((prev) => [...prev, ...f].slice(0, maxFilesPerMessage));
-  }
-  function openPicker() {
-    fileInputRef.current?.click();
-  }
 
-  // ----- send -----
-  const send = useCallback(async () => {
-    if (sending) return;
-    const message = text.trim();
-    if (!message && files.length === 0) return;
-
+  async function send() {
+    if (!input.trim() && files.length === 0) return;
     setSending(true);
-    setMsgs((m) => (message ? [...m, { role: "user", content: message }] : [...m]));
-    try {
-      const fd = new FormData();
-      if (message) fd.append("message", message);
-      if (sessionId) fd.append("session_id", String(sessionId));
-      files.forEach((f) => fd.append("files", f));
+    setBanner(null);
 
-      const res = await fetch(`${API_BASE}/api/chat/send`, {
+    const attachedNames = files.map((f) => f.name);
+    const userText = input.trim() || "(file only)";
+
+    setMsgs((m) => [...m, { role: "user", content: userText, attachments: attachedNames }]);
+
+    const fd = new FormData();
+    fd.append("message", input.trim());
+    if (active) fd.append("session_id", String(active));
+    files.forEach((f) => fd.append("files", f));
+
+    setInput("");
+    setFiles([]);
+
+    try {
+      const r = await fetch(`${API_BASE}/api/chat/send`, {
         method: "POST",
-        credentials: "include",
+        headers: authHeaders(), // Authorization only; do not set Content-Type for FormData
         body: fd,
       });
 
-      if (!res.ok) {
-        const t = await res.text().catch(() => "");
-        throw new Error(`${res.status}: ${t || "send failed"}`);
+      if (r.status === 429) {
+        let j: any = {};
+        try {
+          j = await r.json();
+        } catch {}
+        setBanner({
+          title: j?.title || "Daily chat limit reached",
+          message:
+            j?.message ||
+            (typeof j?.used === "number" && typeof j?.limit === "number"
+              ? `You've used ${j.used}/${j.limit} messages today.${
+                  j?.reset_at ? ` Resets at ${formatUtcShort(j.reset_at)}.` : ""
+                }`
+              : "You've hit your daily chat limit."),
+          plan: j?.plan,
+          used: j?.used,
+          limit: j?.limit,
+          reset_at: j?.reset_at,
+        });
+        return;
       }
-      const data = await res.json();
-      const assistant = data?.assistant?.content ?? "OK.";
-      setSessionId(data?.session_id ?? sessionId);
-      setMsgs((m) => [...m, { role: "assistant", content: assistant }]);
-      setFiles([]);
-      setText("");
-    } catch (err: any) {
-      console.error(err);
-      setMsgs((m) => [...m, { role: "assistant", content: "Sorry, I couldn't send that. Please try again." }]);
+
+      if (!r.ok) {
+        const txt = await r.text().catch(() => "");
+        const msg =
+          r.status === 403
+            ? "Pro+ can attach one file per message. Upgrade to Premium for multiple attachments."
+            : "Sorry, I couldn't send that. Please try again.";
+        setMsgs((m) => [...m, { role: "assistant", content: msg + (txt ? `\n\n${txt}` : "") }]);
+      } else {
+        const j = await r.json();
+        if (!active && j?.session_id) setActive(j.session_id);
+        const assistantText =
+          j?.assistant?.content ?? j?.assistant ?? j?.assistant_message ?? "OK.";
+        setMsgs((m) => [...m, { role: "assistant", content: assistantText }]);
+        // refresh sessions if new
+        setSessions((prev) => (prev.find((s) => s.id === (j?.session_id || active)) ? prev : prev));
+        if (j?.session_id && !sessions.find((s) => s.id === j.session_id)) {
+          loadSessions();
+        }
+      }
+    } catch {
+      setMsgs((m) => [...m, { role: "assistant", content: "Network error. Please try again." }]);
     } finally {
       setSending(false);
     }
-  }, [API_BASE, files, sessionId, sending, text]);
+  }
 
-  // ----- UI -----
   return (
-    <div className="min-h-screen w-full bg-black text-white">
-      {/* header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
-        <div className="text-lg font-semibold">New chat</div>
-        <span className="px-2 py-1 rounded bg-zinc-800 text-xs">ADMIN</span>
-      </div>
-
-      <div className="flex">
-        {/* sidebar */}
-        <aside className="w-64 border-r border-zinc-800 p-3 hidden md:block">
-          <button
-            className="w-full mb-3 rounded bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
-            onClick={() => setSessionId(null)}
-          >
-            + New chat
-          </button>
-          <div className="space-y-2">
-            {sessions.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => setSessionId(s.id)}
-                className={`w-full text-left px-3 py-2 rounded ${
-                  sessionId === s.id ? "bg-zinc-700" : "bg-zinc-900 hover:bg-zinc-800"
-                }`}
-              >
-                <div className="text-xs opacity-70">Session</div>
-                <div className="text-sm">#{s.id}</div>
-              </button>
-            ))}
-            {!sessions.length && <div className="text-xs opacity-60">No conversations yet.</div>}
+    <div
+      className={`h-screen bg-zinc-950 text-zinc-100 grid transition-all ${
+        isDragging ? "ring-2 ring-blue-500/40" : ""
+      }`}
+      style={{ gridTemplateColumns: navOpen ? "260px 1fr" : "0 1fr" }}
+    >
+      {/* Sidebar */}
+      <aside
+        className={`border-r border-zinc-800 bg-[rgb(14,19,32)] overflow-hidden transition-[width] duration-150 ${
+          navOpen ? "w-[260px]" : "w-0"
+        }`}
+      >
+        <div className="h-full flex flex-col">
+          <div className="px-3 py-3 border-b border-zinc-800 flex items-center gap-2">
+            <button
+              className="px-2 py-1 text-xs rounded bg-zinc-800 hover:bg-zinc-700"
+              onClick={() => {
+                setActive(null);
+                setMsgs([]);
+              }}
+            >
+              + New chat
+            </button>
           </div>
-        </aside>
 
-        {/* main */}
-        <main className="flex-1 flex flex-col">
-          {/* messages */}
-          <div
-            className={`flex-1 overflow-y-auto p-4 ${isDragging ? "ring-2 ring-blue-500" : ""}`}
-            onDragEnter={onDragEnter}
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            onDrop={onDrop}
-          >
-            {msgs.length === 0 && (
-              <div className="text-sm opacity-70">Attach files or type a message to get started.</div>
-            )}
-            {msgs.map((m, i) => (
-              <div key={i} className={`max-w-3xl mb-6 ${m.role === "user" ? "ml-auto" : ""}`}>
-                <div
-                  className={`rounded px-4 py-3 ${
-                    m.role === "user" ? "bg-blue-600" : "bg-zinc-900 border border-zinc-800"
+          <div className="flex-1 overflow-auto px-2 py-2 space-y-1">
+            {sessions.map((s) => {
+              const isActive = active === s.id;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => {
+                    setActive(s.id);
+                    loadHistory(s.id);
+                  }}
+                  className={`w-full text-left px-3 py-2 rounded-lg border ${
+                    isActive ? "border-blue-500 bg-blue-500/10" : "border-zinc-800 hover:bg-zinc-900/60"
                   }`}
                 >
-                  {m.role === "assistant" ? <Markdown text={m.content} /> : <div>{m.content}</div>}
-                </div>
-              </div>
-            ))}
+                  <div className="text-[13px] truncate">{s.title || `Chat ${s.id}`}</div>
+                  <div className="text-[11px] opacity-60">{new Date(s.created_at).toLocaleString()}</div>
+                </button>
+              );
+            })}
+            {!sessions.length && <div className="text-xs opacity-60 px-2 py-1">No conversations yet.</div>}
           </div>
 
-          {/* composer */}
-          <div className="border-t border-zinc-800 p-3">
-            {/* attachments */}
-            {files.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-2">
-                {files.map((f, idx) => (
-                  <span key={idx} className="text-xs bg-zinc-800 px-2 py-1 rounded">
-                    {f.name}
-                  </span>
-                ))}
+          <div className="p-3 border-t border-zinc-800 space-y-2 text-sm">
+            {isProPlus && (
+              <div className="text-xs opacity-70">
+                Pro+ has daily message limits and one file per message. Upgrade to Premium for multiple attachments.
+              </div>
+            )}
+            {isAdmin && (
+              <Link href="/admin" className="block text-center px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500">
+                Admin Mode
+              </Link>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      {/* Conversation column */}
+      <section className="relative h-screen grid grid-rows-[auto,1fr,auto]">
+        {/* Top bar */}
+        <header className="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur supports-[backdrop-filter]:bg-zinc-950/60">
+          <div className="mx-auto max-w-4xl px-4 py-3 flex items-center gap-3">
+            <button
+              onClick={() => setNavOpen((v) => !v)}
+              className="px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-sm"
+            >
+              {navOpen ? "Hide" : "Show"} sidebar
+            </button>
+            <h1 className="text-base md:text-lg font-semibold truncate">
+              {useMemo(
+                () => sessions.find((x) => x.id === active)?.title || (active ? `Chat ${active}` : "New chat"),
+                [sessions, active]
+              )}
+            </h1>
+
+            <div className="flex-1" />
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs px-2 py-1 rounded bg-zinc-800 border border-zinc-700">{me.tier.toUpperCase()}</span>
+              <button onClick={logoutClient} className="px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-sm" title="Log out">
+                Log out
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {/* Banner (Pro+ daily limit) */}
+        {banner && (
+          <div className="mx-auto max-w-3xl px-4 pt-4">
+            <div className="rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 p-4 text-fuchsia-100">
+              <div className="font-semibold">{banner.title || "Daily chat limit reached"}</div>
+              <div className="text-sm mt-1">
+                {banner.message ||
+                  `You've used ${banner.used ?? "—"}/${banner.limit ?? "—"} messages today.${
+                    banner.reset_at ? ` Resets at ${formatUtcShort(banner.reset_at)}.` : ""
+                  }`}
+              </div>
+              <div className="mt-2 flex gap-2">
+                <a href="/payments" className="rounded-md bg-fuchsia-600 px-3 py-1 text-white hover:bg-fuchsia-500">
+                  Upgrade to Premium
+                </a>
+                <button onClick={() => setBanner(null)} className="text-xs underline">
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Messages */}
+        <div ref={scrollerRef} className="overflow-auto">
+          <div className="mx-auto max-w-3xl px-4 py-6 space-y-5">
+            {msgs.length === 0 && (
+              <div className="rounded-xl border border-dashed border-zinc-800 p-8 text-center text-sm opacity-70">
+                Start a conversation — attach document(s) for context or just ask CAIO anything.
               </div>
             )}
 
-            <div className="flex gap-2">
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={onPickFiles}
-              />
-              <button
-                onClick={openPicker}
-                className="px-3 py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-sm"
-              >
-                Attach
-              </button>
-              <input
-                className="flex-1 px-3 py-2 rounded bg-zinc-900 border border-zinc-800 outline-none"
+            {msgs.map((m, i) => {
+              const isUser = m.role === "user";
+              if (isUser) {
+                return (
+                  <article key={i} className="flex">
+                    <div className="ml-auto max-w-[75%]">
+                      {!!m.attachments?.length && (
+                        <div className="mb-2 flex flex-wrap gap-2 justify-end">
+                          {m.attachments.map((name, idx) => (
+                            <span
+                              key={`${name}-${idx}`}
+                              className="inline-flex items-center gap-2 rounded-full bg-blue-900/40 border border-blue-700/50 px-2 py-1 text-xs"
+                            >
+                              <span className="max-w-[220px] truncate">{name}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="bg-blue-600/15 text-blue-100 border border-blue-500/30 rounded-2xl">
+                        <div className="px-4 py-3 whitespace-pre-wrap text-[16px] leading-7">{m.content}</div>
+                      </div>
+                    </div>
+                  </article>
+                );
+              }
+
+              const showCXO = looksLikeCXO(m.content);
+              return (
+                <article key={i} className="flex">
+                  <div className="w-full">
+                    <div className="px-1">
+                      {showCXO ? (
+                        <CXOMessage md={m.content} tier={me.tier} />
+                      ) : (
+                        <div className="prose prose-invert max-w-none text-[16px] leading-7">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Composer */}
+        <footer className="border-t border-zinc-800 bg-[rgb(14,19,32)]">
+          <div className="mx-auto max-w-4xl px-4 py-3">
+            {!!files.length && (
+              <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                {files.map((f, idx) => (
+                  <span
+                    key={`${f.name}-${idx}`}
+                    className="inline-flex items-center gap-2 rounded-full bg-zinc-800 border border-zinc-700 px-2 py-1"
+                  >
+                    <span className="max-w-[220px] truncate">{f.name}</span>
+                    <button
+                      onClick={() => removeFile(idx)}
+                      className="rounded bg-zinc-700/60 hover:bg-zinc-600 px-1"
+                      aria-label="Remove file"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                {files.length >= maxFilesPerMessage && (
+                  <span className="text-[11px] opacity-70">
+                    Max {maxFilesPerMessage} file{maxFilesPerMessage > 1 ? "s" : ""} per message.
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "copy";
+                setIsDragging(true);
+              }}
+              onDragEnter={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                setIsDragging(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                addFiles(Array.from(e.dataTransfer.files || []));
+              }}
+              className={`flex items-center gap-2 ${isDragging ? "ring-2 ring-blue-500/40 rounded-lg p-2" : ""}`}
+            >
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                rows={1}
                 placeholder="Type your message…"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
+                className="flex-1 resize-none px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 text-[16px] leading-6"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -248,21 +726,39 @@ export default function PremiumChatPage() {
                   }
                 }}
               />
+              <input
+                ref={fileRef}
+                type="file"
+                multiple={isPremium}
+                className="hidden"
+                onChange={(e) => addFiles(Array.from(e.target.files || []))}
+              />
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
+                title={isPremium ? "Attach up to 8 files" : "Pro+ can attach 1 file"}
+              >
+                {files.length ? `${files.length} file${files.length > 1 ? "s" : ""}` : "Attach"}
+              </button>
               <button
                 onClick={send}
-                disabled={sending}
-                className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
+                disabled={sending || (!input.trim() && files.length === 0)}
+                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60"
               >
                 {sending ? "Sending…" : "Send"}
               </button>
             </div>
+          </div>
+        </footer>
 
-            <div className="mt-2 text-xs opacity-60">
-              Tip: you can also drag & drop files anywhere in the chat.
+        {isDragging && (
+          <div className="pointer-events-none fixed inset-0 flex items-center justify-center">
+            <div className="rounded-2xl border-2 border-dashed border-blue-400/60 bg-zinc-900/70 px-6 py-4 text-sm">
+              Drop file{isPremium ? "s" : ""} to attach {isPremium ? "(up to 8)" : "(1 for Pro+)"}.
             </div>
           </div>
-        </main>
-      </div>
+        )}
+      </section>
     </div>
   );
 }
