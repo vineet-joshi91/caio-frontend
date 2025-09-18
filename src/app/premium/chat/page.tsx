@@ -65,7 +65,7 @@ async function fetchText(res: Response) {
   }
 }
 
-// Ping /api/ready with a short timeout + small backoff (max ~6–8s)
+// Ping /api/ready with a short timeout + small backoff
 async function ensureBackendReady(base: string): Promise<void> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2500);
@@ -111,7 +111,6 @@ type CXOBlock = {
 };
 
 function extractSection(body: string, label: string) {
-  // capture from "### <label>" to the next "### ..." or next "## <ROLE>" or EOF
   const re = new RegExp(
     `^###\\s*${label}\\s*$([\\s\\S]*?)(?=^###\\s*\\w+|^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$|\\Z)`,
     "im"
@@ -132,7 +131,6 @@ function extractListItems(text?: string): string[] {
 function parseCXO(md: string): CXOBlock[] {
   const lines = md.split("\n");
   const sections: { role: string; start: number; end: number }[] = [];
-
   const h2Re = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i");
 
   for (let i = 0; i < lines.length; i++) {
@@ -182,7 +180,7 @@ function uniqStrings(items: string[]) {
 
 /** Renderer:
  *  - Top: Collective Insights
- *  - Then: per-CXO Recommendations only (tier-limited)
+ *  - Then: per-CXO Recommendations only
  */
 function CXOMessage({ md, tier }: { md: string; tier: Tier }) {
   const blocks = parseCXO(md);
@@ -402,26 +400,110 @@ function ChatUI({
   }
 
   /* ---------------- Sessions / History with adaptive methods (avoid 405) ---------------- */
-  async function loadSessions() {
-    try {
-      await ensureBackendReady(API_BASE);
 
-      // Try POST first; if 405, retry with GET.
-      let r = await fetch(`${API_BASE}/api/chat/sessions`, {
+  const endpointCache = useRef<{ sessions: "" | "GET_qs" | "POST_json"; history: "" | "GET_qs" | "POST_json" }>({
+    sessions: "",
+    history: "",
+  });
+
+  useEffect(() => {
+    try {
+      const j = JSON.parse(localStorage.getItem("chat_ep_cache") || "{}");
+      if (j.sessions) endpointCache.current.sessions = j.sessions;
+      if (j.history) endpointCache.current.history = j.history;
+    } catch {}
+  }, []);
+  function persistCache() {
+    try {
+      localStorage.setItem("chat_ep_cache", JSON.stringify(endpointCache.current));
+    } catch {}
+  }
+
+  async function adaptiveFetchListSessions() {
+    // prefer cached
+    if (endpointCache.current.sessions === "GET_qs") {
+      const r = await fetch(`${API_BASE}/api/chat/sessions`, { method: "GET", headers: authHeaders(), cache: "no-store" });
+      if (r.ok) return r;
+    } else if (endpointCache.current.sessions === "POST_json") {
+      const r = await fetch(`${API_BASE}/api/chat/sessions`, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({}),
         cache: "no-store",
       });
-
-      if (r.status === 405) {
-        r = await fetch(`${API_BASE}/api/chat/sessions`, {
-          method: "GET",
-          headers: authHeaders(),
-          cache: "no-store",
-        });
+      if (r.ok) return r;
+    }
+    // discover
+    let r = await fetch(`${API_BASE}/api/chat/sessions`, {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({}),
+      cache: "no-store",
+    });
+    if (r.ok) {
+      endpointCache.current.sessions = "POST_json";
+      persistCache();
+      return r;
+    }
+    if (r.status === 405) {
+      r = await fetch(`${API_BASE}/api/chat/sessions`, { method: "GET", headers: authHeaders(), cache: "no-store" });
+      if (r.ok) {
+        endpointCache.current.sessions = "GET_qs";
+        persistCache();
+        return r;
       }
+    }
+    return r;
+  }
 
+  async function adaptiveFetchHistory(sessionId: number) {
+    if (endpointCache.current.history === "GET_qs") {
+      const r = await fetch(`${API_BASE}/api/chat/history?session_id=${sessionId}`, {
+        method: "GET",
+        headers: authHeaders(),
+        cache: "no-store",
+      });
+      if (r.ok) return r;
+    } else if (endpointCache.current.history === "POST_json") {
+      const r = await fetch(`${API_BASE}/api/chat/history`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ session_id: sessionId }),
+        cache: "no-store",
+      });
+      if (r.ok) return r;
+    }
+    // discover
+    let r = await fetch(`${API_BASE}/api/chat/history?session_id=${sessionId}`, {
+      method: "GET",
+      headers: authHeaders(),
+      cache: "no-store",
+    });
+    if (r.ok) {
+      endpointCache.current.history = "GET_qs";
+      persistCache();
+      return r;
+    }
+    if (r.status === 405) {
+      r = await fetch(`${API_BASE}/api/chat/history`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ session_id: sessionId }),
+        cache: "no-store",
+      });
+      if (r.ok) {
+        endpointCache.current.history = "POST_json";
+        persistCache();
+        return r;
+      }
+    }
+    return r;
+  }
+
+  async function loadSessions() {
+    try {
+      await ensureBackendReady(API_BASE);
+      const r = await adaptiveFetchListSessions();
       if (!r.ok) throw new Error(`${r.status}: ${await fetchText(r)}`);
       const j = await r.json();
       const list: SessionItem[] = Array.isArray(j) ? j : (j.sessions || []);
@@ -430,34 +512,15 @@ function ChatUI({
         setActive(list[0].id);
         await loadHistory(list[0].id);
       }
-    } catch (e) {
-      setMsgs((m) => [
-        ...m,
-        { role: "assistant", content: `Couldn’t load sessions.\n\n${String((e as Error)?.message || e)}` },
-      ]);
+    } catch (e: any) {
+      setMsgs((m) => [...m, { role: "assistant", content: `Couldn’t load sessions.\n\n${e?.message || e}` }]);
     }
   }
 
   async function loadHistory(sessionId: number) {
     try {
       await ensureBackendReady(API_BASE);
-
-      // Try GET first; if 405, retry with POST JSON.
-      let r = await fetch(`${API_BASE}/api/chat/history?session_id=${sessionId}`, {
-        method: "GET",
-        headers: authHeaders(),
-        cache: "no-store",
-      });
-
-      if (r.status === 405) {
-        r = await fetch(`${API_BASE}/api/chat/history`, {
-          method: "POST",
-          headers: authHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({ session_id: sessionId }),
-          cache: "no-store",
-        });
-      }
-
+      const r = await adaptiveFetchHistory(sessionId);
       if (!r.ok) throw new Error(`${r.status}: ${await fetchText(r)}`);
       const j = await r.json();
       const items: Msg[] = (j.messages || []).map((m: any) => ({
@@ -467,11 +530,8 @@ function ChatUI({
         created_at: m.created_at,
       }));
       setMsgs(items);
-    } catch (e) {
-      setMsgs((m) => [
-        ...m,
-        { role: "assistant", content: `Couldn’t load history.\n\n${String((e as Error)?.message || e)}` },
-      ]);
+    } catch (e: any) {
+      setMsgs((m) => [...m, { role: "assistant", content: `Couldn’t load history.\n\n${e?.message || e}` }]);
     }
   }
 
@@ -499,11 +559,10 @@ function ChatUI({
 
       const r = await fetch(`${API_BASE}/api/chat/send`, {
         method: "POST",
-        headers: authHeaders(), // Authorization only; do not set Content-Type for FormData
+        headers: authHeaders(), // Authorization only; let browser set Content-Type for FormData
         body: fd,
       });
 
-      // daily limit
       if (r.status === 429) {
         let j: any = {};
         try {
@@ -553,13 +612,7 @@ function ChatUI({
         }
       }
     } catch (err: any) {
-      setMsgs((m) => [
-        ...m,
-        {
-          role: "assistant",
-          content: `Network error. Please try again.\n\n${String(err?.message || err)}`,
-        },
-      ]);
+      setMsgs((m) => [...m, { role: "assistant", content: `Network error. Please try again.\n\n${String(err?.message || err)}` }]);
     } finally {
       setSending(false);
     }
@@ -579,9 +632,7 @@ function ChatUI({
 
   return (
     <div
-      className={`h-screen bg-zinc-950 text-zinc-100 grid transition-all ${
-        isDragging ? "ring-2 ring-blue-500/40" : ""
-      }`}
+      className={`h-screen bg-zinc-950 text-zinc-100 grid transition-all ${isDragging ? "ring-2 ring-blue-500/40" : ""}`}
       style={{ gridTemplateColumns: navOpen ? "260px 1fr" : "0 1fr" }}
     >
       {/* Sidebar */}
