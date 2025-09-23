@@ -1,155 +1,188 @@
-'use client';
+"use client";
 
-import * as React from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '';
+/* Force dynamic so build-time prerender won't evaluate client hooks */
+export const dynamic = "force-dynamic";
 
-function normalizeError(input: unknown): string {
-  if (!input) return 'Something went wrong';
-  if (typeof input === 'string') return input;
+/* ---------- tiny self-contained auth utils ---------- */
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
+  "https://caio-orchestrator.onrender.com"; // updated fallback to your new orchestrator
 
+type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
+
+function saveToken(tok: string) {
   try {
-    // If it's a Response body we already read as text, try parse
-    const j = typeof input === 'object' ? input as any : JSON.parse(String(input));
-    if (j?.detail) return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
-    if (j?.message) return String(j.message);
-    return JSON.stringify(j);
+    localStorage.setItem("access_token", tok);
+    localStorage.setItem("token", tok);
+    document.cookie = `token=${encodeURIComponent(tok)}; path=/; SameSite=Lax`;
+  } catch {}
+}
+function getToken(): string {
+  try {
+    return (
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("token") ||
+      ""
+    );
   } catch {
-    return String(input);
+    return "";
   }
 }
+function clearToken() {
+  try {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("token");
+    document.cookie = "token=; Max-Age=0; path=/";
+  } catch {}
+}
+async function fetchProfileByToken(tok: string) {
+  const r = await fetch(`${API_BASE}/api/profile`, {
+    headers: { Authorization: `Bearer ${tok}` },
+  });
+  return r;
+}
+function routeForTier(t: Tier): string {
+  if (t === "admin" || t === "premium" || t === "pro_plus") return "/premium/chat";
+  return "/dashboard";
+}
 
-export default function LoginPage() {
+/* ------------------ page ------------------ */
+function LoginInner() {
   const router = useRouter();
-  const params = useSearchParams();
-  const [email, setEmail] = React.useState('');
-  const [password, setPassword] = React.useState('');
-  const [showPw, setShowPw] = React.useState(false);
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState<string>('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const redirectOnceRef = useRef(false);
 
-  const redirectTo = params.get('redirect') || '/premium/chat';
+  // If already logged in, hop once to the right place
+  useEffect(() => {
+    const tok = getToken();
+    if (!tok || redirectOnceRef.current) return;
+    (async () => {
+      try {
+        const r = await fetchProfileByToken(tok);
+        if (r.ok) {
+          const j = await r.json();
+          redirectOnceRef.current = true;
+          router.replace(routeForTier((j?.tier as Tier) || "demo"));
+        } else {
+          clearToken();
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, [router]);
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    setLoading(true);
+    setBusy(true);
+    setError(null);
 
     try {
-      if (!API_BASE) throw new Error('API base is not configured');
-
-      // OAuth2PasswordRequestForm expects x-www-form-urlencoded with "username" & "password"
-      const body = new URLSearchParams();
-      body.set('username', email.trim());
-      body.set('password', password);
-
-      const res = await fetch(`${API_BASE}/api/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
-        // keep default 'cors' mode; backend must allow our origin
+      const resp = await fetch(`${API_BASE}/api/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: email.trim(), password }),
       });
 
-      const raw = await res.text();
-      let data: any = null;
-      try { data = raw ? JSON.parse(raw) : null; } catch { /* leave as null/string */ }
+      const raw = await resp.text();
+      let data: any = {};
+      try { data = raw ? JSON.parse(raw) : {}; } catch {}
 
-      if (!res.ok) {
-        // Prefer server's 'detail' when available
-        const msg =
-          (data && typeof data === 'object' && data.detail) ||
-          (raw && typeof raw === 'string' && raw) ||
-          `Login failed (${res.status})`;
-        throw new Error(normalizeError(msg));
+      if (!resp.ok) {
+        clearToken();
+        throw new Error(
+          data?.detail || data?.message || raw || "Login failed. Please check your credentials."
+        );
       }
 
-      const token = data?.access_token;
-      if (!token || typeof token !== 'string') {
-        throw new Error('No token returned from server');
+      const tok: string | undefined = data?.access_token;
+      if (!tok) {
+        clearToken();
+        throw new Error("No access token returned by server.");
       }
+      saveToken(tok);
 
-      // Persist token for later API calls
-      localStorage.setItem('access_token', token);
-
-      // Optional: keep token_type if you ever need it
-      if (data?.token_type) localStorage.setItem('token_type', String(data.token_type));
-
-      // Navigate to chat (or a redirect target)
-      router.replace(redirectTo);
+      const p = await fetchProfileByToken(tok);
+      if (p.ok) {
+        const j = await p.json();
+        router.replace(routeForTier((j?.tier as Tier) || "demo"));
+      } else {
+        router.replace("/dashboard");
+      }
     } catch (err: any) {
-      setError(normalizeError(err?.message || err));
+      setError(err?.message ?? "Login failed");
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
-  }
+  };
 
   return (
-    <div className="min-h-screen w-full grid place-items-center bg-black text-white px-4">
-      <div className="w-full max-w-md rounded-2xl bg-zinc-900/70 shadow-xl p-6 md:p-8 border border-zinc-800">
-        <h1 className="text-2xl font-semibold mb-6">Log in to CAIO</h1>
+    <main className="min-h-screen w-full bg-black text-white flex items-start justify-center pt-20 px-4">
+      <div className="max-w-md w-full rounded-2xl bg-neutral-900/80 p-6 shadow-xl">
+        <h1 className="text-2xl font-semibold mb-4">Log in to CAIO</h1>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="space-y-2">
-            <label htmlFor="email" className="text-sm text-zinc-300">Email</label>
+        <form onSubmit={onSubmit} className="space-y-4" noValidate>
+          <div>
+            <label className="block mb-1 text-sm text-neutral-300">Email</label>
             <input
-              id="email"
               type="email"
-              autoComplete="username"
-              required
+              className="w-full rounded px-3 py-2 bg-neutral-800 text-white outline-none"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="you@company.com"
+              required
+              autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={false}
             />
           </div>
 
-          <div className="space-y-2">
-            <label htmlFor="password" className="text-sm text-zinc-300">Password</label>
-            <div className="relative">
-              <input
-                id="password"
-                type={showPw ? 'text' : 'password'}
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 pr-12 outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="••••••••"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPw((s) => !s)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400 hover:text-zinc-200"
-                aria-label={showPw ? 'Hide password' : 'Show password'}
-              >
-                {showPw ? 'Hide' : 'Show'}
-              </button>
-            </div>
+          <div>
+            <label className="block mb-1 text-sm text-neutral-300">Password</label>
+            <input
+              type="password"
+              className="w-full rounded px-3 py-2 bg-neutral-800 text-white outline-none"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              autoComplete="current-password"
+            />
           </div>
 
-          {error && (
-            <p className="text-red-400 text-sm leading-relaxed break-words">
-              {error}
-            </p>
-          )}
+          {error && <p className="text-red-400 text-sm">{error}</p>}
 
           <button
             type="submit"
-            disabled={loading}
-            className="w-full rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60 px-4 py-2 font-semibold transition"
+            disabled={busy}
+            className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-60 transition"
           >
-            {loading ? 'Logging in…' : 'Log in'}
+            {busy ? "Signing in…" : "Log in"}
           </button>
         </form>
 
-        <p className="mt-6 text-sm text-zinc-400">
-          New here?{' '}
-          <a href="/signup" className="text-blue-400 hover:underline">
+        <p className="mt-4 text-sm text-neutral-400">
+          New here?{" "}
+          <Link href="/signup" className="underline text-blue-400 hover:text-blue-300">
             Create an account
-          </a>
+          </Link>
         </p>
       </div>
-    </div>
+    </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-white">Loading…</div>}>
+      <LoginInner />
+    </Suspense>
   );
 }
