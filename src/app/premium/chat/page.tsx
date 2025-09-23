@@ -6,13 +6,11 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 /* ---------------- Config ---------------- */
-const API_BASE =
-  (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
-  "https://caio-backend.onrender.com";
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").trim();
 
 /* ---------------- Types ---------------- */
 type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
-type Me = { email: string; tier: Tier };
+type Me = { email: string; tier: Tier; is_admin?: boolean };
 
 type SessionItem = { id: number; title?: string; created_at: string };
 
@@ -48,15 +46,6 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
   const t = readTokenSafe();
   return t ? { ...(extra || {}), Authorization: `Bearer ${t}` } : (extra || {});
 }
-function logoutClient() {
-  try {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("token");
-    document.cookie = "token=; Max-Age=0; path=/; SameSite=Lax";
-  } catch {}
-  window.location.href = "/login";
-}
-
 async function fetchText(res: Response) {
   try {
     return await res.text();
@@ -64,16 +53,14 @@ async function fetchText(res: Response) {
     return "";
   }
 }
-
-// Ping /api/ready with a short timeout + small backoff
 async function ensureBackendReady(base: string): Promise<void> {
+  if (!base) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2500);
   try {
     const r = await fetch(`${base}/api/ready`, { signal: controller.signal, cache: "no-store" });
     clearTimeout(timeout);
     if (!r.ok) throw new Error(`ready ${r.status}`);
-    return;
   } catch {
     clearTimeout(timeout);
     for (let i = 0; i < 3; i++) {
@@ -99,16 +86,11 @@ const ROLE_FULL: Record<string, string> = {
 
 const ROLE_RE = "(CFO|CHRO|COO|CMO|CPO)";
 const H2_CXO_REGEX = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "im");
-
 function looksLikeCXO(md: string) {
   return H2_CXO_REGEX.test(md);
 }
 
-type CXOBlock = {
-  role: string;
-  insights: string[];
-  recs: string[];
-};
+type CXOBlock = { role: string; insights: string[]; recs: string[] };
 
 function extractSection(body: string, label: string) {
   const re = new RegExp(
@@ -118,7 +100,6 @@ function extractSection(body: string, label: string) {
   const m = body.match(re);
   return m ? (m[1] || "").trim() : "";
 }
-
 function extractListItems(text?: string): string[] {
   if (!text) return [];
   const cleaned = text.replace(/^[\s\S]*?(?=^\s*(?:\d+[.)]|[-*•])\s)/m, "");
@@ -127,25 +108,20 @@ function extractListItems(text?: string): string[] {
     .map((p) => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim())
     .filter(Boolean);
 }
-
 function parseCXO(md: string): CXOBlock[] {
   const lines = md.split("\n");
   const sections: { role: string; start: number; end: number }[] = [];
   const h2Re = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i");
-
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(h2Re);
     if (m) {
       const role = (m[1] || "").toUpperCase();
       let j = i + 1;
-      for (; j < lines.length; j++) {
-        if (h2Re.test(lines[j])) break;
-      }
+      for (; j < lines.length; j++) if (h2Re.test(lines[j])) break;
       sections.push({ role, start: i, end: j - 1 });
       i = j - 1;
     }
   }
-
   const out: CXOBlock[] = [];
   for (const s of sections) {
     const block = lines.slice(s.start, s.end + 1).join("\n");
@@ -156,7 +132,6 @@ function parseCXO(md: string): CXOBlock[] {
   }
   return out;
 }
-
 function InlineMD({ text }: { text: string }) {
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ p: (props) => <span {...props} /> }}>
@@ -164,7 +139,6 @@ function InlineMD({ text }: { text: string }) {
     </ReactMarkdown>
   );
 }
-
 function uniqStrings(items: string[]) {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -218,7 +192,8 @@ function CXOMessage({ md, tier }: { md: string; tier: Tier }) {
         return (
           <section key={role} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
             <h3 className="text-xl font-semibold flex items-center gap-2">
-              <span>👤</span> <span>
+              <span>👤</span>{" "}
+              <span>
                 {role} ({full})
               </span>
             </h3>
@@ -250,10 +225,16 @@ export default function PremiumChatPage() {
   const [token, setToken] = useState<string>("");
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
+  const [apiBaseErr, setApiBaseErr] = useState<string | null>(null);
 
   useEffect(() => {
     const t = readTokenSafe();
     setToken(t);
+    if (!API_BASE) {
+      setApiBaseErr("NEXT_PUBLIC_API_BASE is not set in your frontend environment.");
+      setLoading(false);
+      return;
+    }
     if (!t) {
       setLoading(false);
       return;
@@ -268,7 +249,10 @@ export default function PremiumChatPage() {
           setMe(null);
         } else {
           const j = await r.json();
-          setMe({ email: j.email, tier: (j.tier || "demo") as Tier });
+          // ✅ Treat admins as premium on the client (even if server tier says "pro")
+          const isAdmin = !!j.is_admin;
+          const effectiveTier: Tier = isAdmin ? "premium" : ((j.tier || "demo") as Tier);
+          setMe({ email: j.email, tier: effectiveTier, is_admin: isAdmin });
         }
       } catch {
         setMe(null);
@@ -278,10 +262,29 @@ export default function PremiumChatPage() {
     })();
   }, []);
 
-  if (loading) return <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">Loading…</main>;
-  if (!me) return <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">Please log in.</main>;
+  if (loading) {
+    return <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">Loading…</main>;
+  }
+  if (apiBaseErr) {
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
+        <div className="max-w-2xl mx-auto space-y-4">
+          <h1 className="text-2xl font-semibold">Premium Chat</h1>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
+            <p className="text-sm text-red-300">{apiBaseErr}</p>
+          </div>
+        </div>
+      </main>
+    );
+  }
+  if (!me) {
+    return <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">Please log in.</main>;
+  }
 
-  if (!(me.tier === "admin" || me.tier === "premium" || me.tier === "pro_plus")) {
+  // Gate: allow premium, pro_plus (if desired), and admins (already mapped to premium above)
+  const hasPremiumAccess = me.tier === "premium" || me.tier === "pro_plus" || me.tier === "admin";
+
+  if (!hasPremiumAccess) {
     return (
       <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
         <div className="max-w-2xl mx-auto space-y-4">
@@ -304,7 +307,7 @@ export default function PremiumChatPage() {
     <ChatUI
       token={token}
       me={me}
-      isAdmin={me.tier === "admin"}
+      isAdmin={!!me.is_admin || me.tier === "admin"}
       isProPlus={me.tier === "pro_plus"}
       isPremium={me.tier === "premium" || me.tier === "admin"}
     />
@@ -420,6 +423,7 @@ function ChatUI({
   }
 
   async function adaptiveFetchListSessions() {
+    if (!API_BASE) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
     // prefer cached
     if (endpointCache.current.sessions === "GET_qs") {
       const r = await fetch(`${API_BASE}/api/chat/sessions`, { method: "GET", headers: authHeaders(), cache: "no-store" });
@@ -457,6 +461,7 @@ function ChatUI({
   }
 
   async function adaptiveFetchHistory(sessionId: number) {
+    if (!API_BASE) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
     if (endpointCache.current.history === "GET_qs") {
       const r = await fetch(`${API_BASE}/api/chat/history?session_id=${sessionId}`, {
         method: "GET",
@@ -565,9 +570,7 @@ function ChatUI({
 
       if (r.status === 429) {
         let j: any = {};
-        try {
-          j = await r.json();
-        } catch {}
+        try { j = await r.json(); } catch {}
         setBanner({
           title: j?.title || "Daily chat limit reached",
           message:
@@ -587,25 +590,15 @@ function ChatUI({
       if (!r.ok) {
         const body = await fetchText(r);
         const friendly =
-          r.status === 413
-            ? "File too large for your plan."
-            : r.status === 415
-            ? "Unsupported file type."
-            : r.status === 403
-            ? "Pro+ can attach one file per message. Upgrade to Premium for multiple attachments."
-            : "The server couldn’t process the request.";
-        setMsgs((m) => [
-          ...m,
-          {
-            role: "assistant",
-            content: `${friendly}\n\n**Error ${r.status}:** ${body || "(no details)"}`,
-          },
-        ]);
+          r.status === 413 ? "File too large for your plan."
+          : r.status === 415 ? "Unsupported file type."
+          : r.status === 403 ? "Pro+ can attach one file per message. Upgrade to Premium for multiple attachments."
+          : "The server couldn’t process the request.";
+        setMsgs((m) => [...m, { role: "assistant", content: `${friendly}\n\n**Error ${r.status}:** ${body || "(no details)"}` }]);
       } else {
         const j = await r.json();
         if (!active && j?.session_id) setActive(j.session_id);
-        const assistantText =
-          j?.assistant?.content ?? j?.assistant ?? j?.assistant_message ?? "OK.";
+        const assistantText = j?.assistant?.content ?? j?.assistant ?? j?.assistant_message ?? "OK.";
         setMsgs((m) => [...m, { role: "assistant", content: assistantText }]);
         if (j?.session_id && !sessions.find((s) => s.id === j.session_id)) {
           loadSessions();
@@ -712,8 +705,19 @@ function ChatUI({
             <div className="flex-1" />
 
             <div className="flex items-center gap-2">
-              <span className="text-xs px-2 py-1 rounded bg-zinc-800 border border-zinc-700">{me.tier.toUpperCase()}</span>
-              <button onClick={logoutClient} className="px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-sm" title="Log out">
+              <span className="text-xs px-2 py-1 rounded bg-zinc-800 border border-zinc-700">{(me.tier || "demo").toUpperCase()}</span>
+              <button
+                onClick={() => {
+                  try {
+                    localStorage.removeItem("access_token");
+                    localStorage.removeItem("token");
+                    document.cookie = "token=; Max-Age=0; path=/; SameSite=Lax";
+                  } catch {}
+                  window.location.href = "/login";
+                }}
+                className="px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-sm"
+                title="Log out"
+              >
                 Log out
               </button>
             </div>
