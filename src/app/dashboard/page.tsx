@@ -10,7 +10,7 @@ import LogoutButton from "../../components/LogoutButton";
 /* ---------------- Config ---------------- */
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
-  "https://caio-backend.onrender.com";
+  "https://caio-orchestrator.onrender.com";
 
 /* ---------- Types ---------- */
 type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
@@ -102,11 +102,7 @@ export default function DashboardPage() {
           fetch(`${API_BASE}/api/profile`, { headers: { Authorization: `Bearer ${t}` } }),
           20000
         );
-        if (res.status === 401) {
-          // Bad/expired token → clear and kick to login
-          setErr("Invalid token");
-          return;
-        }
+        if (res.status === 401) { setErr("Invalid token"); return; }
         if (!res.ok) throw new Error(await res.text());
         const j = await res.json();
         setMe({
@@ -114,7 +110,7 @@ export default function DashboardPage() {
           is_admin: !!j.is_admin,
           is_paid: !!j.is_paid,
           created_at: j.created_at,
-          tier: j.tier as Tier,
+          tier: (j.tier as Tier) || "demo",
         });
       } catch (e: any) {
         setErr(e?.message || "Couldn’t load your profile. Please log in again.");
@@ -122,34 +118,34 @@ export default function DashboardPage() {
     })();
   }, []);
 
-  // Defensive: if token is invalid, clear it once and go to login (prevents login<->dashboard loops)
+  // If token invalid → clear & kick to login
   useEffect(() => {
     if (!err) return;
     const msg = String(err).toLowerCase();
     if (msg.includes("invalid token") || msg.includes('"detail":"invalid token"') || msg.includes("unauthorized") || msg.includes("401")) {
       try { localStorage.removeItem("access_token"); localStorage.removeItem("token"); } catch {}
-      if (!redirectingRef.current) {
-        redirectingRef.current = true;
-        router.replace("/login");
-      }
+      if (!redirectingRef.current) { redirectingRef.current = true; router.replace("/login"); }
     }
   }, [err, router]);
 
-  // Redirect premium experiences to chat — guard so it only fires once
+  // 🔑 Treat admins as premium for routing (even if tier says "pro")
+  const effectiveTier: Tier | undefined = me?.is_admin ? "premium" : me?.tier;
+
+  // Redirect premium experiences to chat
   useEffect(() => {
     if (redirectingRef.current) return;
     if (busy || !token || !me) return;
-    const highTier = me.tier === "admin" || me.tier === "premium" || me.tier === "pro_plus";
+    const highTier = me.is_admin || effectiveTier === "premium" || effectiveTier === "pro_plus";
     if (highTier) {
       redirectingRef.current = true;
       router.replace("/premium/chat");
     }
-  }, [busy, token, me, router]);
+  }, [busy, token, me, effectiveTier, router]);
 
   const planFromTier = (t?: string) =>
-    t === "admin" || t === "premium" ? "Premium" : t === "pro_plus" ? "Pro+" : t === "pro" ? "Pro" : "Demo";
+    (me?.is_admin || t === "premium") ? "Premium" : t === "pro_plus" ? "Pro+" : t === "pro" ? "Pro" : "Demo";
 
-  const plan = planFromTier(me?.tier);
+  const plan = planFromTier(effectiveTier);
   const planClass =
     plan === "Premium"
       ? "bg-emerald-500/15 border-emerald-400/40 text-emerald-200"
@@ -188,7 +184,7 @@ export default function DashboardPage() {
               {token ? (
                 <>
                   <span className={`px-2.5 py-1 rounded-full text-xs tracking-wide border ${planClass}`}>{plan}</span>
-                  {me?.tier === "admin" && (
+                  {me?.is_admin && (
                     <Link href="/admin" className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-sm shadow">
                       Admin Mode
                     </Link>
@@ -204,9 +200,9 @@ export default function DashboardPage() {
           </div>
 
           {/* CTA row for Demo & Pro */}
-          {token && (me?.tier === "demo" || me?.tier === "pro") && (
+          {token && (effectiveTier === "demo" || effectiveTier === "pro") && (
             <div className="mt-3 flex items-center gap-3">
-              {me?.tier === "demo" && !me?.is_paid && (
+              {effectiveTier === "demo" && !me?.is_paid && (
                 <Link href="/payments" className="inline-block text-blue-300 underline hover:text-blue-200">
                   Upgrade to Pro
                 </Link>
@@ -222,14 +218,14 @@ export default function DashboardPage() {
           )}
 
           {/* tiny hint while redirecting */}
-          {token && (me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus") && (
+          {token && (me?.is_admin || effectiveTier === "premium" || effectiveTier === "pro_plus") && (
             <div className="mt-2 text-xs opacity-70">Redirecting to Premium Chat…</div>
           )}
         </header>
 
-        {/* Demo/Pro dashboard */}
-        {!busy && !err && !(me?.tier === "admin" || me?.tier === "premium" || me?.tier === "pro_plus") && (
-          <AnalyzeCard token={token} isPaid={!!me?.is_paid} tier={(me?.tier || "demo") as Tier} />
+        {/* Demo/Pro dashboard only; premium-like tiers are redirected */}
+        {!busy && !err && !(me?.is_admin || effectiveTier === "premium" || effectiveTier === "pro_plus") && (
+          <AnalyzeCard token={token} isPaid={!!me?.is_paid} tier={(effectiveTier || "demo") as Tier} />
         )}
 
         {busy && token && (
@@ -298,9 +294,7 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
       const fd = new FormData();
       if (text.trim()) fd.append("text", text.trim());
       if (file) fd.append("file", file);
-
-      // ✅ Always ask backend for all 5 CXO brains
-      fd.append("brains", "CFO,CHRO,COO,CMO,CPO");
+      fd.append("brains", "CFO,CHRO,COO,CMO,CPO"); // request all 5 brains
 
       if (!text.trim() && !file) throw new Error("Enter text or upload a file.");
 
@@ -512,7 +506,6 @@ function GroupedReport({
   const proOrAbove = tier === "pro" || tier === "pro_plus" || tier === "premium" || tier === "admin";
 
   // Pro or above: ALWAYS render all 5 cards (placeholders if missing)
-  // Demo: render only sections that exist (handled elsewhere)
   const brainCards = (proOrAbove
     ? desiredOrder.map(label => ({ label, data: byName(label) }))
     : desiredOrder.map(label => ({ label, data: byName(label) })).filter(x => !!x.data)
@@ -530,7 +523,7 @@ function GroupedReport({
     // Recommendations ONLY (no Insights in individual CXO sections)
     const recItems = extractListItems(recommendations || "");
 
-    // Demo: 1 rec; Pro and above: 3 recs (typical model output)
+    // Demo: 1 rec; Pro and above: 3 recs
     const maxForTier = (t: Tier) => (t === "demo" ? 1 : 3);
     const showRecs = recItems.slice(0, maxForTier(tier));
 
@@ -588,7 +581,7 @@ function GroupedReport({
     );
   }
 
-  // Collective section (unchanged)
+  // Collective section
   const collective = (() => {
     const blocks = brains.map((b) => b.insights || "");
     const all: string[] = [];
@@ -620,14 +613,17 @@ function GroupedReport({
       )}
 
       <div className="space-y-3">
-        {brainCards.map(({ label, data }) => (
-          <RoleCard
-            key={label}
-            label={label}
-            recommendations={data?.recommendations}
-            tier={tier}
-          />
-        ))}
+        {desiredOrder.map((label) => {
+          const data = brains.find(b => (b.name || "").trim().toUpperCase().startsWith(label)) || null;
+          return (
+            <RoleCard
+              key={label}
+              label={label}
+              recommendations={data?.recommendations}
+              tier={tier}
+            />
+          );
+        })}
       </div>
     </div>
   );
