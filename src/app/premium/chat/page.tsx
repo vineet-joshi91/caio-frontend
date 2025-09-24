@@ -236,7 +236,7 @@ function parseCXOFromJSON(assistant: any): CXOData | null {
   }
   if (!any && !collective.length) return null;
 
-  // NEW: normalize details_by_role as a partial map while building
+  // details_by_role (partial; promote to defined only if present)
   const detailsCand = combined?.details_by_role ?? {};
   const detailsByRoleBuild: Partial<Record<Role, RoleDetails>> = {};
   for (const r of CXO_ORDER) {
@@ -269,24 +269,16 @@ function parseAssistantToCXO(assistant: Msg): CXOData | null {
   return null;
 }
 
-/* ---------- Role Details UI ---------- */
-function downloadJson(obj: unknown, filename: string) {
-  const blob = new Blob([JSON.stringify(obj, null, 2)], {
-    type: "application/json",
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+/* ---------- helpers for recs dedupe ---------- */
+function norm(s: string) {
+  return s.replace(/\s+/g, " ").trim().toLowerCase();
 }
-async function copyText(s: string) {
-  try {
-    await navigator.clipboard.writeText(s);
-  } catch {}
+function difference(a: string[], b: string[]) {
+  const setB = new Set(b.map(norm));
+  return a.filter((x) => !setB.has(norm(x)));
 }
 
+/* ---------- Role Details UI ---------- */
 function RoleCard({
   role,
   full,
@@ -296,20 +288,24 @@ function RoleCard({
 }: {
   role: Role;
   full: string;
-  bullets: string[];
-  details?: RoleDetails;
+  bullets: string[];             // summary/top list
+  details?: RoleDetails;         // full set from backend if available
   canSeeDetails: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
-  // Resilient details (use full recs if BE didn’t send summary/raw)
+  // Build effective details (fallback to bullets if BE sent nothing)
   const eff: RoleDetails = {
     summary: details?.summary,
-    recommendations: (details?.recommendations && details.recommendations.length
-      ? details.recommendations
-      : bullets),
+    recommendations:
+      details?.recommendations && details.recommendations.length
+        ? details.recommendations
+        : bullets,
     raw: details?.raw,
   };
+
+  // Only show items that are NOT already in the top summary list
+  const extraRecs = difference(eff.recommendations || [], bullets);
 
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
@@ -320,7 +316,7 @@ function RoleCard({
 
         {canSeeDetails && (
           <button
-            onClick={() => setOpen(v => !v)}
+            onClick={() => setOpen((v) => !v)}
             className="px-3 py-1.5 rounded-xl text-sm border border-zinc-700 hover:bg-zinc-800"
             aria-expanded={open}
           >
@@ -355,17 +351,23 @@ function RoleCard({
             <p className="text-sm opacity-70">No summary provided for this role.</p>
           )}
 
-          {(eff.recommendations && eff.recommendations.length > 0) && (
+          {extraRecs.length > 0 ? (
             <>
-              <p className="text-xs uppercase tracking-wide text-zinc-400">Detailed recommendations</p>
+              <p className="text-xs uppercase tracking-wide text-zinc-400">
+                Additional recommendations
+              </p>
               <ul className="list-disc pl-6 space-y-1">
-                {eff.recommendations.map((r, i) => (
+                {extraRecs.map((r, i) => (
                   <li key={i} className="leading-7">
                     <InlineMD text={r} />
                   </li>
                 ))}
               </ul>
             </>
+          ) : (
+            <p className="text-xs opacity-60">
+              No additional recommendations beyond the summary list.
+            </p>
           )}
 
           {eff.raw ? (
@@ -443,29 +445,29 @@ function CXOMessageFromData({
       )}
 
       {CXO_ORDER.map((role) => {
-      const full = ROLE_FULL[role] || role;
+        const full = ROLE_FULL[role] || role;
 
-      const fullRecs = data.byRole?.[role] ?? [];
-      const mainRecs = fullRecs.slice(0, 
-        tier === "admin" || tier === "premium" || tier === "pro_plus" ? 5
-        : tier === "demo" ? 1 : 3
-      );
+        const fullRecs = data.byRole?.[role] ?? [];
+        const mainRecs = fullRecs.slice(
+          0,
+          tier === "admin" || tier === "premium" || tier === "pro_plus" ? 5
+            : tier === "demo" ? 1 : 3
+        );
 
-      // If BE didn’t send details_by_role, synthesize details from the full list
-      const details = data.detailsByRole?.[role] ?? { recommendations: fullRecs };
+        // If BE didn’t send details_by_role, synthesize details from the full list
+        const details = data.detailsByRole?.[role] ?? { recommendations: fullRecs };
 
-      return (
-        <RoleCard
-          key={role}
-          role={role}
-          full={full}
-          bullets={mainRecs}
-          details={details}       // details contains the full list
-          canSeeDetails={tier === "admin" || tier === "premium"}
-        />
-      );
-    })}
-
+        return (
+          <RoleCard
+            key={role}
+            role={role}
+            full={full}
+            bullets={mainRecs}
+            details={details}       // details may contain more than bullets
+            canSeeDetails={canSeeDetails}
+          />
+        );
+      })}
     </div>
   );
 }
