@@ -301,14 +301,37 @@ function RoleCard({
   canSeeDetails: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Close menu on outside click
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, []);
+
+  // Build a resilient "effective details":
+  // - if BE didn't send details, at least show the recs the card already has
+  // - prefer BE-provided fields when available
+  const eff: RoleDetails = {
+    summary: details?.summary,
+    recommendations: (details?.recommendations && details.recommendations.length ? details.recommendations : bullets),
+    raw: details?.raw,
+  };
+
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-xl font-semibold flex items-center gap-2">
           <span>👤</span> <span>{role} ({full})</span>
         </h3>
+
         {canSeeDetails && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2" ref={menuRef}>
             <button
               onClick={() => setOpen((v) => !v)}
               className="px-3 py-1.5 rounded-xl text-sm border border-zinc-700 hover:bg-zinc-800"
@@ -316,43 +339,51 @@ function RoleCard({
             >
               {open ? "Hide details" : "View details"}
             </button>
-            <div className="relative group">
-              <button className="px-3 py-1.5 rounded-xl text-sm border border-zinc-700 hover:bg-zinc-800">
+
+            <div className="relative">
+              <button
+                onClick={() => setMenuOpen((v) => !v)}
+                className="px-3 py-1.5 rounded-xl text-sm border border-zinc-700 hover:bg-zinc-800"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+              >
                 Actions ▾
               </button>
-              <div className="absolute right-0 mt-1 w-52 rounded-xl border border-zinc-700 bg-zinc-900/95 shadow-lg hidden group-hover:block">
-                <button
-                  onClick={() =>
-                    copyText((details?.recommendations || bullets).join("\n"))
-                  }
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-800 rounded-t-xl"
+              {menuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 mt-1 w-56 rounded-xl border border-zinc-700 bg-zinc-900/95 shadow-lg overflow-hidden z-10"
                 >
-                  Copy recommendations
-                </button>
-                <button
-                  onClick={() =>
-                    downloadJson(
-                      { role, details, bullets },
-                      `${role.toLowerCase()}-analysis.json`
-                    )
-                  }
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-800"
-                >
-                  Download JSON
-                </button>
-                <button
-                  onClick={() =>
-                    copyText(
-                      `### ${role} (${full})\n\n- ${(
-                        details?.recommendations || bullets
-                      ).join("\n- ")}`
-                    )
-                  }
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-800 rounded-b-xl"
-                >
-                  Copy as Markdown
-                </button>
-              </div>
+                  <button
+                    role="menuitem"
+                    onClick={() => copyText((eff.recommendations || []).join("\n"))}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-800"
+                  >
+                    Copy recommendations
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() =>
+                      copyText([eff.summary, "", ...(eff.recommendations || [])].filter(Boolean).join("\n"))
+                    }
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-800"
+                  >
+                    Copy summary + recs
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() =>
+                      downloadJson(
+                        { role, summary: eff.summary, recommendations: eff.recommendations, raw: eff.raw },
+                        `${role.toLowerCase()}-analysis.json`
+                      )
+                    }
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-800"
+                  >
+                    Download JSON
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -375,23 +406,37 @@ function RoleCard({
 
       {canSeeDetails && open && (
         <div className="mt-4 rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-3">
-          {!!details?.summary && (
+          {eff.summary ? (
             <>
-              <p className="text-xs uppercase tracking-wide text-zinc-400">
-                Summary
-              </p>
-              <p className="leading-relaxed">{details.summary}</p>
+              <p className="text-xs uppercase tracking-wide text-zinc-400">Summary</p>
+              <p className="leading-relaxed">{eff.summary}</p>
+            </>
+          ) : (
+            <p className="text-sm opacity-70">No summary provided for this role.</p>
+          )}
+
+          {(eff.recommendations && eff.recommendations.length > 0) && (
+            <>
+              <p className="text-xs uppercase tracking-wide text-zinc-400">Detailed recommendations</p>
+              <ul className="list-disc pl-6 space-y-1">
+                {eff.recommendations.map((r, i) => (
+                  <li key={i} className="leading-7">
+                    <InlineMD text={r} />
+                  </li>
+                ))}
+              </ul>
             </>
           )}
-          {!!details?.raw && (
+
+          {eff.raw ? (
             <>
-              <p className="text-xs uppercase tracking-wide text-zinc-400">
-                Model rationale (raw)
-              </p>
+              <p className="text-xs uppercase tracking-wide text-zinc-400">Model rationale (raw)</p>
               <pre className="whitespace-pre-wrap text-sm bg-black/30 p-3 rounded-lg border border-zinc-800 max-h-64 overflow-auto">
-                {details.raw}
+                {eff.raw}
               </pre>
             </>
+          ) : (
+            <p className="text-xs opacity-60">No raw rationale provided.</p>
           )}
         </div>
       )}
@@ -458,20 +503,23 @@ function CXOMessageFromData({
       )}
 
       {CXO_ORDER.map((role) => {
-        const full = ROLE_FULL[role] || role;
-        const recs = (data.byRole?.[role] ?? []).slice(0, maxRecs);
-        const details = data.detailsByRole?.[role];
-        return (
-          <RoleCard
-            key={role}
-            role={role}
-            full={full}
-            bullets={recs}
-            details={details}
-            canSeeDetails={canSeeDetails}
-          />
-        );
-      })}
+      const full = ROLE_FULL[role] || role;
+      const recs = (data.byRole?.[role] ?? []).slice(0, maxRecs);
+
+  // If BE didn't send details_by_role, synthesize minimal details so the panel isn't empty.
+      const details = data.detailsByRole?.[role] ?? { recommendations: recs };
+
+      return (
+        <RoleCard
+          key={role}
+          role={role}
+          full={full}
+          bullets={recs}
+          details={details}
+          canSeeDetails={canSeeDetails}
+        />
+      );
+    })}
     </div>
   );
 }
