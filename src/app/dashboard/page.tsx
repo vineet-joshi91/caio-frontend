@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
@@ -12,24 +12,35 @@ const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-orchestrator.onrender.com";
 
-/* ---------- Types ---------- */
+// bump when you redeploy to be sure caches are busted
+const BUILD_ID = "dash-v1.6";
+
+/* ---------------- Types ---------------- */
 type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
-type Me = { email: string; is_admin: boolean; is_paid: boolean; created_at?: string; tier?: Tier };
+type Me = {
+  email: string;
+  is_admin?: boolean;
+  is_paid?: boolean;
+  created_at?: string;
+  tier?: Tier;
+};
+
 type Result =
-  | { status: "demo"; title: string; summary: string; tip?: string }
-  | { status: "error"; title: string; message: string; action?: string }
+  | { status: "demo"; title?: string; summary?: string; tip?: string }
+  | { status: "error"; title?: string; message: string; action?: string }
   | { status: "ok"; title?: string; summary?: string; [k: string]: any };
 
-/* ---------------- Utils ---------------- */
-function withTimeout<T>(p: Promise<T>, ms = 120000): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
-    p.then(
-      (v) => { clearTimeout(t); resolve(v); },
-      (e) => { clearTimeout(t); reject(e); }
-    );
-  });
-}
+type LimitInfo = {
+  plan?: string;
+  used?: number;
+  limit?: number;
+  remaining?: number;
+  reset_at?: string;
+  title?: string;
+  message?: string;
+} | null;
+
+/* ---------------- Small utils ---------------- */
 function readTokenSafe(): string {
   try {
     const ls = localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -41,9 +52,56 @@ function readTokenSafe(): string {
   }
 }
 
-/* ---------- Markdown helpers ---------- */
+function withTimeout<T>(p: Promise<T>, ms = 120000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); }
+    );
+  });
+}
+
+async function ensureBackendReady(): Promise<void> {
+  if (!API_BASE) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
+  const url = `${API_BASE}/api/ready`;
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 2500);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
+    clearTimeout(to);
+    if (!r.ok) throw new Error(`ready ${r.status}`);
+  } catch {
+    clearTimeout(to);
+    // retry a couple of times in case Render spun down
+    for (let i = 0; i < 2; i++) {
+      await new Promise((res) => setTimeout(res, 1000 + 600 * i));
+      try {
+        const r2 = await fetch(url, { cache: "no-store" });
+        if (r2.ok) return;
+      } catch {}
+    }
+    // let the caller handle errors; we tried
+  }
+}
+
+function normalizeTextItems(items: string[]) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of items) {
+    const k = s.replace(/\s+/g, " ").trim().toLowerCase();
+    if (!k) continue;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+  }
+  return out;
+}
+
+/* ---------------- Markdown helpers ---------------- */
 function normalizeAnalysis(md: string) {
   let s = (md ?? "").trim();
+  // Clean up spacing between sections and lists
   s = s.replace(/\n(?=#{2,3}\s+)/g, "\n\n");
   s = s.replace(/(#{2,3}\s+(Insights|Recommendations|Risks|Actions|Summary))/gi, "\n\n$1");
   s = s.replace(/(#{2,3}\s+[A-Z]{2,}.*?)(\s+#{2,3}\s+)/g, "$1\n\n$2");
@@ -51,13 +109,17 @@ function normalizeAnalysis(md: string) {
   s = s.replace(/\n{3,}/g, "\n\n");
   return s;
 }
+
 type BrainParse = { name: string; insights?: string; recommendations?: string };
 function parseBrains(md: string): BrainParse[] {
+  // Split on H2/H3 headers that look like CXO names
   const sections = md
     .split(/\n(?=#{2,3}\s+[A-Z]{2,}.*$)/gm)
     .map((s) => s.trim())
     .filter(Boolean);
+
   if (sections.length === 0) return [];
+
   return sections.map((sec, i) => {
     const headerMatch = sec.match(/^#{2,3}\s+(.+)$/m);
     const name = (headerMatch ? headerMatch[1] : `Section ${i + 1}`).trim();
@@ -69,12 +131,14 @@ function parseBrains(md: string): BrainParse[] {
     return { name, insights: getBlock("Insights"), recommendations: getBlock("Recommendations") };
   });
 }
-function extractListItems(text: string): string[] {
+
+function extractListItems(text?: string): string[] {
   if (!text) return [];
   const cleaned = text.replace(/^[\s\S]*?(?=^\s*(?:\d+[.)]|[-*•])\s)/m, "");
   const parts = cleaned.split(/\n(?=\s*(?:\d+[.)]|[-*•])\s)/g);
   return parts.map((p) => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim()).filter(Boolean);
 }
+
 function InlineMD({ text }: { text: string }) {
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ p: (props) => <span {...props} /> }}>
@@ -86,20 +150,26 @@ function InlineMD({ text }: { text: string }) {
 /* ---------------- Page ---------------- */
 export default function DashboardPage() {
   const router = useRouter();
-  const [token, setToken] = useState<string>("");
+  const [token, setToken] = useState("");
   const [me, setMe] = useState<Me | null>(null);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const redirectingRef = useRef(false);
 
   useEffect(() => {
+    console.log("CAIO Dashboard build:", BUILD_ID);
     const t = readTokenSafe();
     setToken(t);
     if (!t) { setBusy(false); return; }
+
     (async () => {
       try {
+        await ensureBackendReady();
+      } catch {} // non-fatal; profile call will still run
+
+      try {
         const res = await withTimeout(
-          fetch(`${API_BASE}/api/profile`, { headers: { Authorization: `Bearer ${t}` } }),
+          fetch(`${API_BASE}/api/profile`, { headers: { Authorization: `Bearer ${t}` }, cache: "no-store" }),
           20000
         );
         if (res.status === 401) { setErr("Invalid token"); return; }
@@ -114,27 +184,31 @@ export default function DashboardPage() {
         });
       } catch (e: any) {
         setErr(e?.message || "Couldn’t load your profile. Please log in again.");
-      } finally { setBusy(false); }
+      } finally {
+        setBusy(false);
+      }
     })();
   }, []);
 
-  // If token invalid → clear & kick to login
+  // Kick to /login when token is invalid/expired
   useEffect(() => {
     if (!err) return;
     const msg = String(err).toLowerCase();
     if (msg.includes("invalid token") || msg.includes('"detail":"invalid token"') || msg.includes("unauthorized") || msg.includes("401")) {
-      try { localStorage.removeItem("access_token"); localStorage.removeItem("token"); } catch {}
+      try { localStorage.removeItem("access_token"); localStorage.removeItem("token"); document.cookie = "token=; Max-Age=0; path=/;"; } catch {}
       if (!redirectingRef.current) { redirectingRef.current = true; router.replace("/login"); }
     }
   }, [err, router]);
 
-  // 🔑 Treat admins as premium for routing (even if tier says "pro")
+  // Admins act like Premium
   const effectiveTier: Tier | undefined = me?.is_admin ? "premium" : me?.tier;
 
-  // Redirect premium experiences to chat
+  // Redirect Pro+ / Premium / Admin straight to premium chat
   useEffect(() => {
     if (redirectingRef.current) return;
-    if (busy || !token || !me) return;
+    if (busy) return;
+    if (!token || !me) return;
+
     const highTier = me.is_admin || effectiveTier === "premium" || effectiveTier === "pro_plus";
     if (highTier) {
       redirectingRef.current = true;
@@ -142,10 +216,14 @@ export default function DashboardPage() {
     }
   }, [busy, token, me, effectiveTier, router]);
 
-  const planFromTier = (t?: string) =>
-    (me?.is_admin || t === "premium") ? "Premium" : t === "pro_plus" ? "Pro+" : t === "pro" ? "Pro" : "Demo";
+  const plan = useMemo(() => {
+    if (me?.is_admin) return "Premium";
+    if (effectiveTier === "premium") return "Premium";
+    if (effectiveTier === "pro_plus") return "Pro+";
+    if (effectiveTier === "pro") return "Pro";
+    return "Demo";
+  }, [effectiveTier, me?.is_admin]);
 
-  const plan = planFromTier(effectiveTier);
   const planClass =
     plan === "Premium"
       ? "bg-emerald-500/15 border-emerald-400/40 text-emerald-200"
@@ -155,7 +233,6 @@ export default function DashboardPage() {
       ? "bg-sky-500/15 border-sky-400/40 text-sky-200"
       : "bg-amber-500/15 border-amber-400/40 text-amber-200";
 
-  // Minimal shell while redirecting (prevents flicker)
   if (redirectingRef.current) {
     return (
       <main className="min-h-screen p-6 bg-zinc-950 text-zinc-100">
@@ -171,7 +248,7 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen p-6 bg-zinc-950 text-zinc-100">
       <div className="max-w-4xl mx-auto space-y-6">
-        {/* header */}
+        {/* Header */}
         <header className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800">
           <div className="flex items-center justify-between">
             <div>
@@ -217,15 +294,15 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* tiny hint while redirecting */}
+          {/* Tiny hint while redirecting */}
           {token && (me?.is_admin || effectiveTier === "premium" || effectiveTier === "pro_plus") && (
             <div className="mt-2 text-xs opacity-70">Redirecting to Premium Chat…</div>
           )}
         </header>
 
-        {/* Demo/Pro dashboard only; premium-like tiers are redirected */}
+        {/* Demo/Pro dashboard only; higher tiers are redirected */}
         {!busy && !err && !(me?.is_admin || effectiveTier === "premium" || effectiveTier === "pro_plus") && (
-          <AnalyzeCard token={token} isPaid={!!me?.is_paid} tier={(effectiveTier || "demo") as Tier} />
+          <AnalyzeCard token={token} tier={(effectiveTier || "demo") as Tier} />
         )}
 
         {busy && token && (
@@ -243,25 +320,15 @@ export default function DashboardPage() {
   );
 }
 
-/* ---------------- Analyze card ---------------- */
+/* ---------------- Analyze card (Demo/Pro only) ---------------- */
 
-function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; tier: Tier }) {
-  type LimitInfo = {
-    plan?: string;
-    used?: number;
-    limit?: number;
-    remaining?: number;
-    reset_at?: string;
-    title?: string;
-    message?: string;
-  };
-
+function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [friendlyErr, setFriendlyErr] = useState<string | null>(null);
-  const [limit, setLimit] = useState<LimitInfo | null>(null);
+  const [limit, setLimit] = useState<LimitInfo>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -290,18 +357,22 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
   async function run() {
     setBusy(true);
     resetErrors();
+
     try {
+      if (!text.trim() && !file) throw new Error("Enter a brief or upload a file to analyze.");
+
+      await ensureBackendReady();
+
       const fd = new FormData();
       if (text.trim()) fd.append("text", text.trim());
       if (file) fd.append("file", file);
-      fd.append("brains", "CFO,CHRO,COO,CMO,CPO"); // request all 5 brains
-
-      if (!text.trim() && !file) throw new Error("Enter text or upload a file.");
+      // Ask all 5 brains on dashboard too (the backend will tier-cap depth)
+      fd.append("brains", "CFO,CHRO,COO,CMO,CPO");
 
       const res = await withTimeout(
         fetch(`${API_BASE}/api/analyze`, {
           method: "POST",
-          headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
           body: fd,
         }),
         120000
@@ -311,6 +382,7 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
       let parsed: any = {};
       try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
 
+      // Daily limit banners from backend
       if (res.status === 429) {
         setLimit({
           plan: parsed?.plan, used: parsed?.used, limit: parsed?.limit,
@@ -321,6 +393,18 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
         return;
       }
 
+      if (res.status === 401) {
+        setFriendlyErr("Your session expired. Please log in again.");
+        return;
+      }
+      if (res.status === 413) {
+        setFriendlyErr("That file is too large for your current plan.");
+        return;
+      }
+      if (res.status === 415) {
+        setFriendlyErr("That file type isn’t supported. Try PDF, DOCX, or TXT.");
+        return;
+      }
       if (!res.ok) {
         const message = parsed?.message || parsed?.detail || raw || "Something went wrong while analyzing your request.";
         setResult({ status: "error", title: "Analysis Unavailable", message, action: "Please try again later." });
@@ -338,7 +422,13 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
         setResult({ status: "ok", title: parsed.title || "Analysis Result", summary: parsed.summary || "", ...parsed });
       }
     } catch (e: any) {
-      setFriendlyErr(e?.message || "Something went wrong. Please try again.");
+      const msg = String(e?.message || e);
+      // Common fetch error surfaces as TypeError: Failed to fetch (CORS/network)
+      setFriendlyErr(
+        msg.includes("Failed to fetch")
+          ? "Couldn’t reach the server. If this persists, check your API base URL or try again."
+          : msg
+      );
     } finally {
       setBusy(false);
     }
@@ -348,7 +438,7 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
     <section className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800 space-y-5">
       <h2 className="text-xl font-semibold">Quick analyze</h2>
 
-      {/* limit banner */}
+      {/* Limit banner */}
       {limit && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">
           <div className="flex items-start justify-between gap-3">
@@ -366,21 +456,22 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
               Dismiss
             </button>
           </div>
-          {limit.plan === "demo" && (
-            <div className="mt-2">
-              <a href="/payments" className="inline-block text-xs px-2.5 py-1 rounded-md bg-amber-400/20 border border-amber-400/40 hover:bg-amber-400/30">
-                Upgrade for higher daily limits
-              </a>
-            </div>
-          )}
+          <div className="mt-2">
+            <a href="/payments" className="inline-block text-xs px-2.5 py-1 rounded-md bg-amber-400/20 border border-amber-400/40 hover:bg-amber-400/30">
+              Upgrade for higher daily limits
+            </a>
+          </div>
         </div>
       )}
 
-      {/* dropzone */}
+      {/* Dropzone */}
       <div
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
+        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(true); }}
+        onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(false); }}
+        onDrop={(e) => {
+          e.preventDefault(); e.stopPropagation(); setDragActive(false);
+          const f = e.dataTransfer.files?.[0]; if (f) setFile(f);
+        }}
         className={`rounded-xl border-2 border-dashed p-6 text-sm transition ${
           dragActive ? "border-blue-400 bg-blue-400/10" : "border-zinc-700 hover:border-zinc-500 bg-zinc-950/40"
         }`}
@@ -389,26 +480,31 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
           <svg width="28" height="28" viewBox="0 0 24 24" className="opacity-80">
             <path fill="currentColor" d="M19 12v7H5v-7H3v9h18v-9zM11 2h2v10h3l-4 4l-4-4h3z" />
           </svg>
+        </div>
+        <div className="flex flex-col items-center gap-2 text-center">
           <p className="opacity-85">Drag & drop a document here</p>
           <p className="text-xs opacity-60">PDF, DOCX, TXT…</p>
-          <button type="button" onClick={onBrowseClick} className="mt-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm">
+          <button type="button" onClick={() => fileInputRef.current?.click()} className="mt-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm">
             or browse files
           </button>
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => onFileChosen(e.target.files?.[0] ?? null)} />
         </div>
       </div>
 
-      {/* selected file */}
+      {/* Selected file */}
       {file && (
         <div className="flex items-center justify-between rounded-lg bg-zinc-950/60 border border-zinc-800 px-3 py-2 text-sm">
           <div className="truncate">
             <span className="opacity-90">{file.name}</span>
             <span className="opacity-60"> • {(file.size / 1024).toFixed(1)} KB</span>
           </div>
+          <button onClick={() => setFile(null)} className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-xs">
+            Remove
+          </button>
         </div>
       )}
 
-      {/* prompt */}
+      {/* Prompt */}
       <div className="space-y-2">
         <label className="text-sm opacity-85">Brief / instructions</label>
         <textarea
@@ -419,17 +515,17 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
         />
       </div>
 
-      {/* actions */}
+      {/* Actions */}
       <div className="flex items-center gap-3">
         <button onClick={run} disabled={busy} className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-60 shadow">
           {busy ? "Analyzing…" : "Analyze"}
         </button>
         <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
-          {isPaid ? "Manage plan" : "Need full features? Upgrade"}
+          Need full features? Upgrade
         </Link>
       </div>
 
-      {/* errors */}
+      {/* Errors */}
       {friendlyErr && (
         <div className="mt-3 p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-200">
           <h3 className="font-semibold mb-1">We hit a snag</h3>
@@ -437,7 +533,7 @@ function AnalyzeCard({ token, isPaid, tier }: { token: string; isPaid: boolean; 
         </div>
       )}
 
-      {/* results */}
+      {/* Results */}
       {result && (
         <div className="mt-3">
           {result.status === "error" ? (
@@ -470,9 +566,14 @@ function GroupedReport({
   title: string;
   md: string;
   demo?: boolean;
-  tier: "admin" | "premium" | "pro_plus" | "pro" | "demo";
+  tier: Tier;
 }) {
   const normalized = normalizeAnalysis(md);
+  const brains = parseBrains(normalized);
+  const desiredOrder = ["CFO", "CHRO", "COO", "CMO", "CPO"] as const;
+
+  const getByLabel = (label: string) =>
+    brains.find((b) => (b.name || "").trim().toUpperCase().startsWith(label)) || null;
 
   /* ---- Demo preview block ---- */
   if (demo) {
@@ -496,21 +597,7 @@ function GroupedReport({
     );
   }
 
-  /* ---- Full (non-demo): Pro = 5 brains, show Recommendations only ---- */
-  const brains = parseBrains(normalized);
-  const desiredOrder = ["CFO","CHRO","COO","CMO","CPO"] as const;
-
-  const byName = (name: string) =>
-    brains.find(b => (b.name || "").trim().toUpperCase().startsWith(name)) || null;
-
-  const proOrAbove = tier === "pro" || tier === "pro_plus" || tier === "premium" || tier === "admin";
-
-  // Pro or above: ALWAYS render all 5 cards (placeholders if missing)
-  const brainCards = (proOrAbove
-    ? desiredOrder.map(label => ({ label, data: byName(label) }))
-    : desiredOrder.map(label => ({ label, data: byName(label) })).filter(x => !!x.data)
-  );
-
+  /* ---- Non-demo: show recommendations only, tier-capped ---- */
   function RoleCard({
     label,
     recommendations,
@@ -520,12 +607,10 @@ function GroupedReport({
     recommendations?: string;
     tier: Tier;
   }) {
-    // Recommendations ONLY (no Insights in individual CXO sections)
-    const recItems = extractListItems(recommendations || "");
-
-    // Demo: 1 rec; Pro and above: 3 recs
-    const maxForTier = (t: Tier) => (t === "demo" ? 1 : 3);
-    const showRecs = recItems.slice(0, maxForTier(tier));
+    const rawItems = extractListItems(recommendations || "");
+    const items = normalizeTextItems(rawItems);
+    const cap = tier === "demo" ? 1 : 3; // demo=1, pro/pro+=3
+    const show = items.slice(0, cap);
 
     const showUpgradePlacard = tier === "demo";
     const showChatUpsell = tier === "pro";
@@ -536,12 +621,11 @@ function GroupedReport({
           <h4 className="text-lg font-medium">{label}</h4>
         </header>
 
-        {/* Recommendations only */}
-        {showRecs.length > 0 ? (
+        {show.length ? (
           <>
             <div className="mt-1 text-sm font-semibold opacity-90">Recommendations</div>
             <ol className="mt-2 list-decimal pl-6 space-y-1">
-              {showRecs.map((it, i) => (
+              {show.map((it, i) => (
                 <li key={i} className="leading-7">
                   <InlineMD text={it} />
                 </li>
@@ -581,8 +665,8 @@ function GroupedReport({
     );
   }
 
-  // Collective section
-  const collective = (() => {
+  // Collate top “collective insights” across brains (deduped, top 5)
+  const collective = useMemo(() => {
     const blocks = brains.map((b) => b.insights || "");
     const all: string[] = [];
     blocks.forEach((b) => extractListItems(b).forEach((x) => all.push(x)));
@@ -591,11 +675,9 @@ function GroupedReport({
       const key = it.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
       counts.set(key, { c: (counts.get(key)?.c ?? 0) + 1, text: it });
     }
-    const ranked = [...counts.values()]
-      .sort((a, b) => b.c - a.c || b.text.length - a.text.length)
-      .map((x) => x.text);
+    const ranked = [...counts.values()].sort((a, b) => b.c - a.c || b.text.length - a.text.length).map((x) => x.text);
     return ranked.slice(0, 5);
-  })();
+  }, [brains]);
 
   return (
     <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
@@ -614,7 +696,7 @@ function GroupedReport({
 
       <div className="space-y-3">
         {desiredOrder.map((label) => {
-          const data = brains.find(b => (b.name || "").trim().toUpperCase().startsWith(label)) || null;
+          const data = getByLabel(label);
           return (
             <RoleCard
               key={label}
