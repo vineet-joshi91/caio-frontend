@@ -20,8 +20,7 @@ type Msg = {
   content: string;
   created_at?: string;
   attachments?: string[];
-  // passthrough object from BE if present
-  content_json?: any;
+  content_json?: any; // passthrough from backend if present
 };
 
 type LimitBanner = {
@@ -36,7 +35,10 @@ type LimitBanner = {
 /* ---------------- Token + network helpers ---------------- */
 function readTokenSafe(): string {
   try {
-    const ls = localStorage.getItem("access_token") || localStorage.getItem("token") || "";
+    const ls =
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("token") ||
+      "";
     if (ls) return ls;
     const m = document.cookie.match(/(?:^|;)\s*token=([^;]+)/);
     return m ? decodeURIComponent(m[1]) : "";
@@ -49,14 +51,21 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
   return t ? { ...(extra || {}), Authorization: `Bearer ${t}` } : (extra || {});
 }
 async function fetchText(res: Response) {
-  try { return await res.text(); } catch { return ""; }
+  try {
+    return await res.text();
+  } catch {
+    return "";
+  }
 }
 async function ensureBackendReady(base: string): Promise<void> {
   if (!base) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2500);
   try {
-    const r = await fetch(`${base}/api/ready`, { signal: controller.signal, cache: "no-store" });
+    const r = await fetch(`${base}/api/ready`, {
+      signal: controller.signal,
+      cache: "no-store",
+    });
     clearTimeout(timeout);
     if (!r.ok) throw new Error(`ready ${r.status}`);
   } catch {
@@ -82,29 +91,45 @@ const ROLE_FULL: Record<string, string> = {
   CPO: "Chief People Officer",
 };
 type Role = (typeof CXO_ORDER)[number];
-type CXOData = { collectiveInsights: string[]; byRole: Record<Role, string[]> };
+type RoleDetails = { summary?: string; recommendations?: string[]; raw?: string };
+type CXOData = {
+  collectiveInsights: string[];
+  byRole: Record<Role, string[]>;
+  detailsByRole?: Record<Role, RoleDetails>;
+};
 
 function InlineMD({ text }: { text: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ p: (props) => <span {...props} /> }}>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{ p: (props) => <span {...props} /> }}
+    >
       {text}
     </ReactMarkdown>
   );
 }
 function uniqStrings(items: string[]) {
-  const seen = new Set<string>(), out: string[] = [];
+  const seen = new Set<string>(),
+    out: string[] = [];
   for (const t of items) {
     const k = t.replace(/\s+/g, " ").trim().toLowerCase();
-    if (!seen.has(k) && t.trim()) { seen.add(k); out.push(t); }
+    if (!seen.has(k) && t.trim()) {
+      seen.add(k);
+      out.push(t);
+    }
   }
   return out;
 }
 
 /* ---------- Markdown parser ---------- */
 const ROLE_RE = "(CFO|CHRO|COO|CMO|CPO)";
-const H2_CXO_REGEX = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "im");
-function looksLikeCXO(md: string) { return H2_CXO_REGEX.test(md); }
-
+const H2_CXO_REGEX = new RegExp(
+  `^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`,
+  "im"
+);
+function looksLikeCXO(md: string) {
+  return H2_CXO_REGEX.test(md);
+}
 function extractSection(body: string, label: string) {
   const re = new RegExp(
     `^###\\s*${label}\\s*$([\\s\\S]*?)(?=^###\\s*\\w+|^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$|\\Z)`,
@@ -124,7 +149,10 @@ function extractListItems(text?: string): string[] {
 function parseCXOFromMarkdown(md: string): CXOData | null {
   const lines = md.split("\n");
   const sections: { role: Role; start: number; end: number }[] = [];
-  const h2Re = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "i");
+  const h2Re = new RegExp(
+    `^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`,
+    "i"
+  );
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(h2Re);
     if (m) {
@@ -146,11 +174,20 @@ function parseCXOFromMarkdown(md: string): CXOData | null {
     blocks.push({ role: s.role, insights: ins, recs });
   }
 
-  const collectiveInsights = uniqStrings(blocks.flatMap((b) => b.insights)).slice(0, 30);
-  const byRole: Record<Role, string[]> = { CFO: [], CHRO: [], COO: [], CMO: [], CPO: [] };
+  const collectiveInsights = uniqStrings(
+    blocks.flatMap((b) => b.insights)
+  ).slice(0, 30);
+  const byRole: Record<Role, string[]> = {
+    CFO: [],
+    CHRO: [],
+    COO: [],
+    CMO: [],
+    CPO: [],
+  };
   for (const b of blocks) byRole[b.role] = b.recs || [];
 
-  const any = collectiveInsights.length || CXO_ORDER.some((r) => byRole[r]?.length);
+  const any =
+    collectiveInsights.length || CXO_ORDER.some((r) => byRole[r]?.length);
   return any ? { collectiveInsights, byRole } : null;
 }
 
@@ -159,25 +196,38 @@ function safeParseJson(s: unknown) {
   if (typeof s !== "string") return null;
   const t = s.trim();
   if (!t.startsWith("{") && !t.startsWith("[")) return null;
-  try { return JSON.parse(t); } catch { return null; }
+  try {
+    return JSON.parse(t);
+  } catch {
+    return null;
+  }
 }
 function parseCXOFromJSON(assistant: any): CXOData | null {
   if (!assistant) return null;
   const payload = assistant.content_json ?? safeParseJson(assistant.content) ?? assistant;
   if (!payload || typeof payload !== "object") return null;
 
-  const combined = payload?.combined;
+  const combined = (payload as any)?.combined;
   const agg = combined?.aggregate ?? {};
   const collective =
-    payload?.collective_insights ?? agg.collective ?? agg.collective_insights ?? [];
+    (payload as any)?.collective_insights ??
+    agg.collective ??
+    agg.collective_insights ??
+    [];
 
   const byRoleCand =
-    payload?.recommendations_by_role ??
-    payload?.cxo_recommendations ??
+    (payload as any)?.recommendations_by_role ??
+    (payload as any)?.cxo_recommendations ??
     agg.recommendations_by_role ??
     {};
 
-  const byRole: Record<Role, string[]> = { CFO: [], CHRO: [], COO: [], CMO: [], CPO: [] };
+  const byRole: Record<Role, string[]> = {
+    CFO: [],
+    CHRO: [],
+    COO: [],
+    CMO: [],
+    CPO: [],
+  };
   let any = false;
   for (const r of CXO_ORDER) {
     const arr = (byRoleCand?.[r] ?? []).filter(Boolean);
@@ -185,7 +235,28 @@ function parseCXOFromJSON(assistant: any): CXOData | null {
     if (arr.length) any = true;
   }
   if (!any && !collective.length) return null;
-  return { collectiveInsights: collective, byRole };
+
+  // NEW: normalize details_by_role as a partial map while building
+  const detailsCand = combined?.details_by_role ?? {};
+  const detailsByRoleBuild: Partial<Record<Role, RoleDetails>> = {};
+  for (const r of CXO_ORDER) {
+    const x = detailsCand?.[r];
+    if (x) {
+      detailsByRoleBuild[r] = {
+        summary: typeof x.summary === "string" ? x.summary : undefined,
+        recommendations: Array.isArray(x.recommendations)
+          ? x.recommendations.filter(Boolean)
+          : undefined,
+        raw: typeof x.raw === "string" ? x.raw : undefined,
+      };
+    }
+  }
+  const detailsOut =
+    Object.keys(detailsByRoleBuild).length > 0
+      ? (detailsByRoleBuild as Record<Role, RoleDetails>)
+      : undefined;
+
+  return { collectiveInsights: collective, byRole, detailsByRole: detailsOut };
 }
 
 /* ---------- Unified parse ---------- */
@@ -198,11 +269,152 @@ function parseAssistantToCXO(assistant: Msg): CXOData | null {
   return null;
 }
 
-/* ---------- Renderer ---------- */
-function CXOMessageFromData({ data, tier }: { data: CXOData; tier: Tier }) {
+/* ---------- Role Details UI ---------- */
+function downloadJson(obj: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+async function copyText(s: string) {
+  try {
+    await navigator.clipboard.writeText(s);
+  } catch {}
+}
+
+function RoleCard({
+  role,
+  full,
+  bullets,
+  details,
+  canSeeDetails,
+}: {
+  role: Role;
+  full: string;
+  bullets: string[];
+  details?: RoleDetails;
+  canSeeDetails: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-xl font-semibold flex items-center gap-2">
+          <span>👤</span> <span>{role} ({full})</span>
+        </h3>
+        {canSeeDetails && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setOpen((v) => !v)}
+              className="px-3 py-1.5 rounded-xl text-sm border border-zinc-700 hover:bg-zinc-800"
+              aria-expanded={open}
+            >
+              {open ? "Hide details" : "View details"}
+            </button>
+            <div className="relative group">
+              <button className="px-3 py-1.5 rounded-xl text-sm border border-zinc-700 hover:bg-zinc-800">
+                Actions ▾
+              </button>
+              <div className="absolute right-0 mt-1 w-52 rounded-xl border border-zinc-700 bg-zinc-900/95 shadow-lg hidden group-hover:block">
+                <button
+                  onClick={() =>
+                    copyText((details?.recommendations || bullets).join("\n"))
+                  }
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-800 rounded-t-xl"
+                >
+                  Copy recommendations
+                </button>
+                <button
+                  onClick={() =>
+                    downloadJson(
+                      { role, details, bullets },
+                      `${role.toLowerCase()}-analysis.json`
+                    )
+                  }
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-800"
+                >
+                  Download JSON
+                </button>
+                <button
+                  onClick={() =>
+                    copyText(
+                      `### ${role} (${full})\n\n- ${(
+                        details?.recommendations || bullets
+                      ).join("\n- ")}`
+                    )
+                  }
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-800 rounded-b-xl"
+                >
+                  Copy as Markdown
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 text-sm font-semibold opacity-90 flex items-center gap-2">
+        <span>✅</span> <span>Recommendations</span>
+      </div>
+      {bullets.length ? (
+        <ul className="mt-2 list-disc pl-6 space-y-1">
+          {bullets.map((it, i) => (
+            <li key={i} className="leading-7">
+              <InlineMD text={it} />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="mt-2 text-sm opacity-70">No actionable data found.</div>
+      )}
+
+      {canSeeDetails && open && (
+        <div className="mt-4 rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-3">
+          {!!details?.summary && (
+            <>
+              <p className="text-xs uppercase tracking-wide text-zinc-400">
+                Summary
+              </p>
+              <p className="leading-relaxed">{details.summary}</p>
+            </>
+          )}
+          {!!details?.raw && (
+            <>
+              <p className="text-xs uppercase tracking-wide text-zinc-400">
+                Model rationale (raw)
+              </p>
+              <pre className="whitespace-pre-wrap text-sm bg-black/30 p-3 rounded-lg border border-zinc-800 max-h-64 overflow-auto">
+                {details.raw}
+              </pre>
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ---------- Renderer (uses RoleCard for Premium/Admin) ---------- */
+function CXOMessageFromData({
+  data,
+  tier,
+}: {
+  data: CXOData;
+  tier: Tier;
+}) {
   const maxRecs =
-    tier === "admin" || tier === "premium" || tier === "pro_plus" ? 5 : tier === "demo" ? 1 : 3;
+    tier === "admin" || tier === "premium" || tier === "pro_plus"
+      ? 5
+      : tier === "demo"
+      ? 1
+      : 3;
   const top = (data.collectiveInsights ?? []).slice(0, 30);
+  const canSeeDetails = tier === "admin" || tier === "premium";
 
   return (
     <div className="space-y-4">
@@ -219,33 +431,45 @@ function CXOMessageFromData({ data, tier }: { data: CXOData; tier: Tier }) {
             ))}
           </ol>
         ) : (
-          <div className="mt-2 text-sm opacity-70">No material evidence in the provided context.</div>
+          <div className="mt-2 text-sm opacity-70">
+            No material evidence in the provided context.
+          </div>
         )}
       </section>
+
+      {/* Pro+ upsell banner */}
+      {tier === "pro_plus" && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-amber-100">
+          <div className="font-semibold">
+            Detailed CXO Analysis is a Premium feature
+          </div>
+          <div className="text-sm mt-1">
+            Upgrade to Premium to view per-role summaries, raw model rationale, and JSON exports.
+          </div>
+          <div className="mt-2">
+            <a
+              href="/payments"
+              className="inline-block px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500"
+            >
+              Upgrade to Premium
+            </a>
+          </div>
+        </div>
+      )}
 
       {CXO_ORDER.map((role) => {
         const full = ROLE_FULL[role] || role;
         const recs = (data.byRole?.[role] ?? []).slice(0, maxRecs);
+        const details = data.detailsByRole?.[role];
         return (
-          <section key={role} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-            <h3 className="text-xl font-semibold flex items-center gap-2">
-              <span>👤</span> <span>{role} ({full})</span>
-            </h3>
-            <div className="mt-3 text-sm font-semibold opacity-90 flex items-center gap-2">
-              <span>✅</span> <span>Recommendations</span>
-            </div>
-            {recs.length ? (
-              <ul className="mt-2 list-disc pl-6 space-y-1">
-                {recs.map((it, i) => (
-                  <li key={i} className="leading-7">
-                    <InlineMD text={it} />
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="mt-2 text-sm opacity-70">No actionable data found.</div>
-            )}
-          </section>
+          <RoleCard
+            key={role}
+            role={role}
+            full={full}
+            bullets={recs}
+            details={details}
+            canSeeDetails={canSeeDetails}
+          />
         );
       })}
     </div>
@@ -282,7 +506,9 @@ export default function PremiumChatPage() {
         } else {
           const j = await r.json();
           const isAdmin = !!j.is_admin;
-          const effectiveTier: Tier = isAdmin ? "premium" : ((j.tier || "demo") as Tier);
+          const effectiveTier: Tier = isAdmin
+            ? "premium"
+            : ((j.tier || "demo") as Tier);
           setMe({ email: j.email, tier: effectiveTier, is_admin: isAdmin });
         }
       } catch {
@@ -293,7 +519,12 @@ export default function PremiumChatPage() {
     })();
   }, []);
 
-  if (loading) return <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">Loading…</main>;
+  if (loading)
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
+        Loading…
+      </main>
+    );
 
   if (apiBaseErr) {
     return (
@@ -307,9 +538,15 @@ export default function PremiumChatPage() {
       </main>
     );
   }
-  if (!me) return <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">Please log in.</main>;
+  if (!me)
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
+        Please log in.
+      </main>
+    );
 
-  const hasPremiumAccess = me.tier === "premium" || me.tier === "pro_plus" || me.tier === "admin";
+  const hasPremiumAccess =
+    me.tier === "premium" || me.tier === "pro_plus" || me.tier === "admin";
   if (!hasPremiumAccess) {
     return (
       <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
@@ -318,7 +555,13 @@ export default function PremiumChatPage() {
         </div>
         <div className="max-w-2xl mx-auto rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
           Chat is a <b>Premium</b> feature. Your current tier is <b>{me.tier}</b>.{" "}
-          <Link href="/payments" className="underline text-blue-300 hover:text-blue-200">Upgrade to request access</Link>.
+          <Link
+            href="/payments"
+            className="underline text-blue-300 hover:text-blue-200"
+          >
+            Upgrade to request access
+          </Link>
+          .
         </div>
       </main>
     );
@@ -422,7 +665,10 @@ function ChatUI({
 
   /* ---------------- Sessions / History with adaptive methods (avoid 405) ---------------- */
 
-  const endpointCache = useRef<{ sessions: "" | "GET_qs" | "POST_json"; history: "" | "GET_qs" | "POST_json" }>({
+  const endpointCache = useRef<{
+    sessions: "" | "GET_qs" | "POST_json";
+    history: "" | "GET_qs" | "POST_json";
+  }>({
     sessions: "",
     history: "",
   });
@@ -436,7 +682,10 @@ function ChatUI({
   }, []);
   function persistCache() {
     try {
-      localStorage.setItem("chat_ep_cache", JSON.stringify(endpointCache.current));
+      localStorage.setItem(
+        "chat_ep_cache",
+        JSON.stringify(endpointCache.current)
+      );
     } catch {}
   }
 
@@ -444,7 +693,11 @@ function ChatUI({
     if (!API_BASE) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
     // prefer cached
     if (endpointCache.current.sessions === "GET_qs") {
-      const r = await fetch(`${API_BASE}/api/chat/sessions`, { method: "GET", headers: authHeaders(), cache: "no-store" });
+      const r = await fetch(`${API_BASE}/api/chat/sessions`, {
+        method: "GET",
+        headers: authHeaders(),
+        cache: "no-store",
+      });
       if (r.ok) return r;
     } else if (endpointCache.current.sessions === "POST_json") {
       const r = await fetch(`${API_BASE}/api/chat/sessions`, {
@@ -468,7 +721,11 @@ function ChatUI({
       return r;
     }
     if (r.status === 405) {
-      r = await fetch(`${API_BASE}/api/chat/sessions`, { method: "GET", headers: authHeaders(), cache: "no-store" });
+      r = await fetch(`${API_BASE}/api/chat/sessions`, {
+        method: "GET",
+        headers: authHeaders(),
+        cache: "no-store",
+      });
       if (r.ok) {
         endpointCache.current.sessions = "GET_qs";
         persistCache();
@@ -481,11 +738,14 @@ function ChatUI({
   async function adaptiveFetchHistory(sessionId: number) {
     if (!API_BASE) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
     if (endpointCache.current.history === "GET_qs") {
-      const r = await fetch(`${API_BASE}/api/chat/history?session_id=${sessionId}`, {
-        method: "GET",
-        headers: authHeaders(),
-        cache: "no-store",
-      });
+      const r = await fetch(
+        `${API_BASE}/api/chat/history?session_id=${sessionId}`,
+        {
+          method: "GET",
+          headers: authHeaders(),
+          cache: "no-store",
+        }
+      );
       if (r.ok) return r;
     } else if (endpointCache.current.history === "POST_json") {
       const r = await fetch(`${API_BASE}/api/chat/history`, {
@@ -497,11 +757,14 @@ function ChatUI({
       if (r.ok) return r;
     }
     // discover
-    let r = await fetch(`${API_BASE}/api/chat/history?session_id=${sessionId}`, {
-      method: "GET",
-      headers: authHeaders(),
-      cache: "no-store",
-    });
+    let r = await fetch(
+      `${API_BASE}/api/chat/history?session_id=${sessionId}`,
+      {
+        method: "GET",
+        headers: authHeaders(),
+        cache: "no-store",
+      }
+    );
     if (r.ok) {
       endpointCache.current.history = "GET_qs";
       persistCache();
@@ -529,14 +792,20 @@ function ChatUI({
       const r = await adaptiveFetchListSessions();
       if (!r.ok) throw new Error(`${r.status}: ${await fetchText(r)}`);
       const j = await r.json();
-      const list: SessionItem[] = Array.isArray(j) ? j : (j.sessions || []);
+      const list: SessionItem[] = Array.isArray(j) ? j : j.sessions || [];
       setSessions(list);
       if (!active && list.length) {
         setActive(list[0].id);
         await loadHistory(list[0].id);
       }
     } catch (e: any) {
-      setMsgs((m) => [...m, { role: "assistant", content: `Couldn’t load sessions.\n\n${e?.message || e}` } as Msg]);
+      setMsgs((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: `Couldn’t load sessions.\n\n${e?.message || e}`,
+        } as Msg,
+      ]);
     }
   }
 
@@ -555,7 +824,13 @@ function ChatUI({
       }));
       setMsgs(items);
     } catch (e: any) {
-      setMsgs((m) => [...m, { role: "assistant", content: `Couldn’t load history.\n\n${e?.message || e}` } as Msg]);
+      setMsgs((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: `Couldn’t load history.\n\n${e?.message || e}`,
+        } as Msg,
+      ]);
     }
   }
 
@@ -568,7 +843,10 @@ function ChatUI({
     const attachedNames = files.map((f) => f.name);
     const userText = input.trim() || "(file only)";
 
-    setMsgs((m) => [...m, { role: "user", content: userText, attachments: attachedNames } as Msg]);
+    setMsgs((m) => [
+      ...m,
+      { role: "user", content: userText, attachments: attachedNames } as Msg,
+    ]);
 
     const fd = new FormData();
     fd.append("message", input.trim());
@@ -589,7 +867,9 @@ function ChatUI({
 
       if (r.status === 429) {
         let j: any = {};
-        try { j = await r.json(); } catch {}
+        try {
+          j = await r.json();
+        } catch {}
         setBanner({
           title: j?.title || "Daily chat limit reached",
           message:
@@ -609,11 +889,22 @@ function ChatUI({
       if (!r.ok) {
         const body = await fetchText(r);
         const friendly =
-          r.status === 413 ? "File too large for your plan."
-          : r.status === 415 ? "Unsupported file type."
-          : r.status === 403 ? "Pro+ can attach one file per message. Upgrade to Premium for multiple attachments."
-          : "The server couldn’t process the request.";
-        setMsgs((m) => [...m, { role: "assistant", content: `${friendly}\n\n**Error ${r.status}:** ${body || "(no details)"}` } as Msg]);
+          r.status === 413
+            ? "File too large for your plan."
+            : r.status === 415
+            ? "Unsupported file type."
+            : r.status === 403
+            ? "Pro+ can attach one file per message. Upgrade to Premium for multiple attachments."
+            : "The server couldn’t process the request.";
+        setMsgs((m) => [
+          ...m,
+          {
+            role: "assistant",
+            content: `${friendly}\n\n**Error ${r.status}:** ${
+              body || "(no details)"
+            }`,
+          } as Msg,
+        ]);
       } else {
         const j = await r.json();
         if (!active && j?.session_id) setActive(j.session_id);
@@ -633,7 +924,15 @@ function ChatUI({
         }
       }
     } catch (err: any) {
-      setMsgs((m) => [...m, { role: "assistant", content: `Network error. Please try again.\n\n${String(err?.message || err)}` } as Msg]);
+      setMsgs((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: `Network error. Please try again.\n\n${
+            String(err?.message || err)
+          }`,
+        } as Msg,
+      ]);
     } finally {
       setSending(false);
     }
@@ -653,7 +952,9 @@ function ChatUI({
 
   return (
     <div
-      className={`h-screen bg-zinc-950 text-zinc-100 grid transition-all ${isDragging ? "ring-2 ring-blue-500/40" : ""}`}
+      className={`h-screen bg-zinc-950 text-zinc-100 grid transition-all ${
+        isDragging ? "ring-2 ring-blue-500/40" : ""
+      }`}
       style={{ gridTemplateColumns: navOpen ? "260px 1fr" : "0 1fr" }}
     >
       {/* Sidebar */}
@@ -686,25 +987,39 @@ function ChatUI({
                     loadHistory(s.id);
                   }}
                   className={`w-full text-left px-3 py-2 rounded-lg border ${
-                    isActive ? "border-blue-500 bg-blue-500/10" : "border-zinc-800 hover:bg-zinc-900/60"
+                    isActive
+                      ? "border-blue-500 bg-blue-500/10"
+                      : "border-zinc-800 hover:bg-zinc-900/60"
                   }`}
                 >
-                  <div className="text-[13px] truncate">{s.title || `Chat ${s.id}`}</div>
-                  <div className="text-[11px] opacity-60">{new Date(s.created_at).toLocaleString()}</div>
+                  <div className="text-[13px] truncate">
+                    {s.title || `Chat ${s.id}`}
+                  </div>
+                  <div className="text-[11px] opacity-60">
+                    {new Date(s.created_at).toLocaleString()}
+                  </div>
                 </button>
               );
             })}
-            {!sessions.length && <div className="text-xs opacity-60 px-2 py-1">No conversations yet.</div>}
+            {!sessions.length && (
+              <div className="text-xs opacity-60 px-2 py-1">
+                No conversations yet.
+              </div>
+            )}
           </div>
 
           <div className="p-3 border-t border-zinc-800 space-y-2 text-sm">
             {isProPlus && (
               <div className="text-xs opacity-70">
-                Pro+ has daily message limits and one file per message. Upgrade to Premium for multiple attachments.
+                Pro+ can attach one file and see basic recs. Upgrade to Premium
+                for detailed CXO analysis.
               </div>
             )}
             {isAdmin && (
-              <Link href="/admin" className="block text-center px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500">
+              <Link
+                href="/admin"
+                className="block text-center px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500"
+              >
                 Admin Mode
               </Link>
             )}
@@ -725,7 +1040,9 @@ function ChatUI({
             </button>
             <h1 className="text-base md:text-lg font-semibold truncate">
               {useMemo(
-                () => sessions.find((x) => x.id === active)?.title || (active ? `Chat ${active}` : "New chat"),
+                () =>
+                  sessions.find((x) => x.id === active)?.title ||
+                  (active ? `Chat ${active}` : "New chat"),
                 [sessions, active]
               )}
             </h1>
@@ -733,7 +1050,9 @@ function ChatUI({
             <div className="flex-1" />
 
             <div className="flex items-center gap-2">
-              <span className="text-xs px-2 py-1 rounded bg-zinc-800 border border-zinc-700">{(me.tier || "demo").toUpperCase()}</span>
+              <span className="text-xs px-2 py-1 rounded bg-zinc-800 border border-zinc-700">
+                {(me.tier || "demo").toUpperCase()}
+              </span>
               <button
                 onClick={() => {
                   try {
@@ -756,15 +1075,24 @@ function ChatUI({
         {banner && (
           <div className="mx-auto max-w-3xl px-4 pt-4">
             <div className="rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 p-4 text-fuchsia-100">
-              <div className="font-semibold">{banner.title || "Daily chat limit reached"}</div>
+              <div className="font-semibold">
+                {banner.title || "Daily chat limit reached"}
+              </div>
               <div className="text-sm mt-1">
                 {banner.message ||
-                  `You've used ${banner.used ?? "—"}/${banner.limit ?? "—"} messages today.${
-                    banner.reset_at ? ` Resets at ${formatUtcShort(banner.reset_at)}.` : ""
+                  `You've used ${banner.used ?? "—"}/${
+                    banner.limit ?? "—"
+                  } messages today.${
+                    banner.reset_at
+                      ? ` Resets at ${formatUtcShort(banner.reset_at)}.`
+                      : ""
                   }`}
               </div>
               <div className="mt-2 flex gap-2">
-                <a href="/payments" className="rounded-md bg-fuchsia-600 px-3 py-1 text-white hover:bg-fuchsia-500">
+                <a
+                  href="/payments"
+                  className="rounded-md bg-fuchsia-600 px-3 py-1 text-white hover:bg-fuchsia-500"
+                >
                   Upgrade to Premium
                 </a>
                 <button onClick={() => setBanner(null)} className="text-xs underline">
@@ -803,7 +1131,9 @@ function ChatUI({
                         </div>
                       )}
                       <div className="bg-blue-600/15 text-blue-100 border border-blue-500/30 rounded-2xl">
-                        <div className="px-4 py-3 whitespace-pre-wrap text-[16px] leading-7">{m.content}</div>
+                        <div className="px-4 py-3 whitespace-pre-wrap text-[16px] leading-7">
+                          {m.content}
+                        </div>
                       </div>
                     </div>
                   </article>
@@ -827,7 +1157,9 @@ function ChatUI({
                 <article key={i} className="flex">
                   <div className="w-full px-1">
                     <div className="prose prose-invert max-w-none text-[16px] leading-7">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {m.content}
+                      </ReactMarkdown>
                     </div>
                   </div>
                 </article>
@@ -858,7 +1190,8 @@ function ChatUI({
                 ))}
                 {files.length >= maxFilesPerMessage && (
                   <span className="text-[11px] opacity-70">
-                    Max {maxFilesPerMessage} file{maxFilesPerMessage > 1 ? "s" : ""} per message.
+                    Max {maxFilesPerMessage} file
+                    {maxFilesPerMessage > 1 ? "s" : ""} per message.
                   </span>
                 )}
               </div>
@@ -883,7 +1216,9 @@ function ChatUI({
                 setIsDragging(false);
                 addFiles(Array.from(e.dataTransfer.files || []));
               }}
-              className={`flex items-center gap-2 ${isDragging ? "ring-2 ring-blue-500/40 rounded-lg p-2" : ""}`}
+              className={`flex items-center gap-2 ${
+                isDragging ? "ring-2 ring-blue-500/40 rounded-lg p-2" : ""
+              }`}
             >
               <textarea
                 value={input}
@@ -908,9 +1243,13 @@ function ChatUI({
               <button
                 onClick={() => fileRef.current?.click()}
                 className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
-                title={isPremium ? "Attach up to 8 files" : "Pro+ can attach 1 file"}
+                title={
+                  isPremium ? "Attach up to 8 files" : "Pro+ can attach 1 file"
+                }
               >
-                {files.length ? `${files.length} file${files.length > 1 ? "s" : ""}` : "Attach"}
+                {files.length
+                  ? `${files.length} file${files.length > 1 ? "s" : ""}`
+                  : "Attach"}
               </button>
               <button
                 onClick={send}
