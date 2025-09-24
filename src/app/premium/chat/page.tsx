@@ -301,25 +301,13 @@ function RoleCard({
   canSeeDetails: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // Close menu on outside click
-  useEffect(() => {
-    function onDocClick(e: MouseEvent) {
-      if (!menuRef.current) return;
-      if (!menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    }
-    document.addEventListener("click", onDocClick);
-    return () => document.removeEventListener("click", onDocClick);
-  }, []);
-
-  // Build a resilient "effective details":
-  // - if BE didn't send details, at least show the recs the card already has
-  // - prefer BE-provided fields when available
+  // Resilient details (use full recs if BE didn’t send summary/raw)
   const eff: RoleDetails = {
     summary: details?.summary,
-    recommendations: (details?.recommendations && details.recommendations.length ? details.recommendations : bullets),
+    recommendations: (details?.recommendations && details.recommendations.length
+      ? details.recommendations
+      : bullets),
     raw: details?.raw,
   };
 
@@ -331,61 +319,13 @@ function RoleCard({
         </h3>
 
         {canSeeDetails && (
-          <div className="flex items-center gap-2" ref={menuRef}>
-            <button
-              onClick={() => setOpen((v) => !v)}
-              className="px-3 py-1.5 rounded-xl text-sm border border-zinc-700 hover:bg-zinc-800"
-              aria-expanded={open}
-            >
-              {open ? "Hide details" : "View details"}
-            </button>
-
-            <div className="relative">
-              <button
-                onClick={() => setMenuOpen((v) => !v)}
-                className="px-3 py-1.5 rounded-xl text-sm border border-zinc-700 hover:bg-zinc-800"
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-              >
-                Actions ▾
-              </button>
-              {menuOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 mt-1 w-56 rounded-xl border border-zinc-700 bg-zinc-900/95 shadow-lg overflow-hidden z-10"
-                >
-                  <button
-                    role="menuitem"
-                    onClick={() => copyText((eff.recommendations || []).join("\n"))}
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-800"
-                  >
-                    Copy recommendations
-                  </button>
-                  <button
-                    role="menuitem"
-                    onClick={() =>
-                      copyText([eff.summary, "", ...(eff.recommendations || [])].filter(Boolean).join("\n"))
-                    }
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-800"
-                  >
-                    Copy summary + recs
-                  </button>
-                  <button
-                    role="menuitem"
-                    onClick={() =>
-                      downloadJson(
-                        { role, summary: eff.summary, recommendations: eff.recommendations, raw: eff.raw },
-                        `${role.toLowerCase()}-analysis.json`
-                      )
-                    }
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-zinc-800"
-                  >
-                    Download JSON
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
+          <button
+            onClick={() => setOpen(v => !v)}
+            className="px-3 py-1.5 rounded-xl text-sm border border-zinc-700 hover:bg-zinc-800"
+            aria-expanded={open}
+          >
+            {open ? "Hide details" : "View details"}
+          </button>
         )}
       </div>
 
@@ -504,22 +444,28 @@ function CXOMessageFromData({
 
       {CXO_ORDER.map((role) => {
       const full = ROLE_FULL[role] || role;
-      const recs = (data.byRole?.[role] ?? []).slice(0, maxRecs);
 
-  // If BE didn't send details_by_role, synthesize minimal details so the panel isn't empty.
-      const details = data.detailsByRole?.[role] ?? { recommendations: recs };
+      const fullRecs = data.byRole?.[role] ?? [];
+      const mainRecs = fullRecs.slice(0, 
+        tier === "admin" || tier === "premium" || tier === "pro_plus" ? 5
+        : tier === "demo" ? 1 : 3
+      );
+
+      // If BE didn’t send details_by_role, synthesize details from the full list
+      const details = data.detailsByRole?.[role] ?? { recommendations: fullRecs };
 
       return (
         <RoleCard
           key={role}
           role={role}
           full={full}
-          bullets={recs}
-          details={details}
-          canSeeDetails={canSeeDetails}
+          bullets={mainRecs}
+          details={details}       // details contains the full list
+          canSeeDetails={tier === "admin" || tier === "premium"}
         />
       );
     })}
+
     </div>
   );
 }
