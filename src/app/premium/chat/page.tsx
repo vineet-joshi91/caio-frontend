@@ -20,7 +20,7 @@ type Msg = {
   content: string;
   created_at?: string;
   attachments?: string[];
-  // optional passthrough if BE ever returns content_json
+  // passthrough object from BE if present
   content_json?: any;
 };
 
@@ -49,11 +49,7 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
   return t ? { ...(extra || {}), Authorization: `Bearer ${t}` } : (extra || {});
 }
 async function fetchText(res: Response) {
-  try {
-    return await res.text();
-  } catch {
-    return "";
-  }
+  try { return await res.text(); } catch { return ""; }
 }
 async function ensureBackendReady(base: string): Promise<void> {
   if (!base) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
@@ -96,25 +92,19 @@ function InlineMD({ text }: { text: string }) {
   );
 }
 function uniqStrings(items: string[]) {
-  const seen = new Set<string>();
-  const out: string[] = [];
+  const seen = new Set<string>(), out: string[] = [];
   for (const t of items) {
     const k = t.replace(/\s+/g, " ").trim().toLowerCase();
-    if (!seen.has(k) && t.trim()) {
-      seen.add(k);
-      out.push(t);
-    }
+    if (!seen.has(k) && t.trim()) { seen.add(k); out.push(t); }
   }
   return out;
 }
 
-/* ---------- Markdown parser (your original logic, kept) ---------- */
+/* ---------- Markdown parser ---------- */
 const ROLE_RE = "(CFO|CHRO|COO|CMO|CPO)";
 const H2_CXO_REGEX = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "im");
-function looksLikeCXO(md: string) {
-  return H2_CXO_REGEX.test(md);
-}
-type CXOBlock = { role: string; insights: string[]; recs: string[] };
+function looksLikeCXO(md: string) { return H2_CXO_REGEX.test(md); }
+
 function extractSection(body: string, label: string) {
   const re = new RegExp(
     `^###\\s*${label}\\s*$([\\s\\S]*?)(?=^###\\s*\\w+|^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$|\\Z)`,
@@ -147,7 +137,7 @@ function parseCXOFromMarkdown(md: string): CXOData | null {
   }
   if (!sections.length) return null;
 
-  const blocks: CXOBlock[] = [];
+  const blocks: { role: Role; insights: string[]; recs: string[] }[] = [];
   for (const s of sections) {
     const block = lines.slice(s.start, s.end + 1).join("\n");
     const body = block.replace(h2Re, "").trim();
@@ -158,26 +148,21 @@ function parseCXOFromMarkdown(md: string): CXOData | null {
 
   const collectiveInsights = uniqStrings(blocks.flatMap((b) => b.insights)).slice(0, 30);
   const byRole: Record<Role, string[]> = { CFO: [], CHRO: [], COO: [], CMO: [], CPO: [] };
-  for (const b of blocks) byRole[b.role as Role] = b.recs || [];
+  for (const b of blocks) byRole[b.role] = b.recs || [];
 
   const any = collectiveInsights.length || CXO_ORDER.some((r) => byRole[r]?.length);
   return any ? { collectiveInsights, byRole } : null;
 }
 
-/* ---------- JSON parser (new) ---------- */
+/* ---------- JSON parser ---------- */
 function safeParseJson(s: unknown) {
   if (typeof s !== "string") return null;
   const t = s.trim();
   if (!t.startsWith("{") && !t.startsWith("[")) return null;
-  try {
-    return JSON.parse(t);
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(t); } catch { return null; }
 }
 function parseCXOFromJSON(assistant: any): CXOData | null {
   if (!assistant) return null;
-  // prefer explicit content_json if BE sends it
   const payload = assistant.content_json ?? safeParseJson(assistant.content) ?? assistant;
   if (!payload || typeof payload !== "object") return null;
 
@@ -205,20 +190,15 @@ function parseCXOFromJSON(assistant: any): CXOData | null {
 
 /* ---------- Unified parse ---------- */
 function parseAssistantToCXO(assistant: Msg): CXOData | null {
-  // 1) JSON path first
   const j = parseCXOFromJSON(assistant);
   if (j) return j;
-  // 2) Markdown path
   if (typeof assistant.content === "string" && looksLikeCXO(assistant.content)) {
     return parseCXOFromMarkdown(assistant.content);
   }
   return null;
 }
 
-/** Renderer:
- *  - Top: Collective Insights
- *  - Then: per-CXO Recommendations
- */
+/* ---------- Renderer ---------- */
 function CXOMessageFromData({ data, tier }: { data: CXOData; tier: Tier }) {
   const maxRecs =
     tier === "admin" || tier === "premium" || tier === "pro_plus" ? 5 : tier === "demo" ? 1 : 3;
@@ -226,7 +206,6 @@ function CXOMessageFromData({ data, tier }: { data: CXOData; tier: Tier }) {
 
   return (
     <div className="space-y-4">
-      {/* Collective insights */}
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
         <h3 className="text-xl font-semibold flex items-center gap-2">
           <span>🔎</span> <span>Insights</span>
@@ -244,21 +223,17 @@ function CXOMessageFromData({ data, tier }: { data: CXOData; tier: Tier }) {
         )}
       </section>
 
-      {/* CXO Recommendations only */}
       {CXO_ORDER.map((role) => {
         const full = ROLE_FULL[role] || role;
         const recs = (data.byRole?.[role] ?? []).slice(0, maxRecs);
-
         return (
           <section key={role} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
             <h3 className="text-xl font-semibold flex items-center gap-2">
               <span>👤</span> <span>{role} ({full})</span>
             </h3>
-
             <div className="mt-3 text-sm font-semibold opacity-90 flex items-center gap-2">
               <span>✅</span> <span>Recommendations</span>
             </div>
-
             {recs.length ? (
               <ul className="mt-2 list-disc pl-6 space-y-1">
                 {recs.map((it, i) => (
@@ -306,7 +281,6 @@ export default function PremiumChatPage() {
           setMe(null);
         } else {
           const j = await r.json();
-          // ✅ Treat admins as premium on the client (even if server tier says "pro")
           const isAdmin = !!j.is_admin;
           const effectiveTier: Tier = isAdmin ? "premium" : ((j.tier || "demo") as Tier);
           setMe({ email: j.email, tier: effectiveTier, is_admin: isAdmin });
@@ -836,7 +810,7 @@ function ChatUI({
                 );
               }
 
-              // NEW: unified render — try JSON/markdown parser first
+              // Unified render — try JSON/markdown parser first
               const data = parseAssistantToCXO(m as Msg);
               if (data) {
                 return (
@@ -848,7 +822,7 @@ function ChatUI({
                 );
               }
 
-              // Fallback: render raw markdown/text
+              // Fallback: render raw markdown/text so the user always sees something
               return (
                 <article key={i} className="flex">
                   <div className="w-full px-1">
