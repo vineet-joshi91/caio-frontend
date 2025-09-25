@@ -608,15 +608,22 @@ function GroupedReport({
     return list.slice(0, Math.max(2, Math.min(3, list.length)));
   }, [combined]);
 
-  const jsonRoleTop1 = useMemo(() => {
+    const jsonRoleTop1 = useMemo(() => {
     const map: Record<string, string | undefined> = {};
     const byRole = combined?.details_by_role || {};
-    desiredOrder.forEach((role) => {
-      const recs = byRole?.[role]?.recommendations || [];
-      map[role] = recs.length ? recs[0] : undefined;
+    const agg = combined?.aggregate || {};
+    const aggMapA = agg.cxo_recommendations || {};
+    const aggMapB = agg.recommendations_by_role || {};
+    (["CFO","CHRO","COO","CMO","CPO"] as const).forEach((role) => {
+      let first =
+        byRole?.[role]?.recommendations?.[0] ??
+        aggMapA?.[role]?.[0] ??
+        aggMapB?.[role]?.[0];
+      map[role] = first;
     });
     return map;
   }, [combined]);
+
 
   // ---------- Fallback to markdown if JSON absent ----------
   const fallbackBrains = useMemo(() => {
