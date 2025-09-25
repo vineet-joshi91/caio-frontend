@@ -89,7 +89,7 @@ function LoginInner() {
       const resp = await fetch(`${API_BASE}/api/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        //credentials: "include",
         body: JSON.stringify({ email: email.trim(), password }),
       });
 
