@@ -13,7 +13,7 @@ const API_BASE =
   "https://caio-orchestrator.onrender.com";
 
 // bump when you redeploy to be sure caches are busted
-const BUILD_ID = "dash-v1.6";
+const BUILD_ID = "dash-v1.7-json";
 
 /* ---------------- Types ---------------- */
 type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
@@ -25,10 +25,26 @@ type Me = {
   tier?: Tier;
 };
 
+type CombinedJSON = {
+  aggregate?: {
+    collective?: string[];
+    collective_insights?: string[];
+    recommendations_by_role?: Record<string, string[]>;
+    cxo_recommendations?: Record<string, string[]>;
+  };
+  details_by_role?: Record<
+    "CFO" | "CHRO" | "COO" | "CMO" | "CPO" | string,
+    { summary?: string | null; recommendations?: string[]; raw?: string | null }
+  >;
+  overall_summary?: string;
+  document_filename?: string | null;
+  insights?: any[];
+};
+
 type Result =
-  | { status: "demo"; title?: string; summary?: string; tip?: string }
+  | { status: "demo"; title?: string; summary?: string; combined?: CombinedJSON; tip?: string }
   | { status: "error"; title?: string; message: string; action?: string }
-  | { status: "ok"; title?: string; summary?: string; [k: string]: any };
+  | { status: "ok"; title?: string; summary?: string; combined?: CombinedJSON; [k: string]: any };
 
 type LimitInfo = {
   plan?: string;
@@ -56,8 +72,14 @@ function withTimeout<T>(p: Promise<T>, ms = 120000): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
     p.then(
-      (v) => { clearTimeout(t); resolve(v); },
-      (e) => { clearTimeout(t); reject(e); }
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
     );
   });
 }
@@ -81,27 +103,12 @@ async function ensureBackendReady(): Promise<void> {
         if (r2.ok) return;
       } catch {}
     }
-    // let the caller handle errors; we tried
   }
 }
 
-function normalizeTextItems(items: string[]) {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const s of items) {
-    const k = s.replace(/\s+/g, " ").trim().toLowerCase();
-    if (!k) continue;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push(s);
-  }
-  return out;
-}
-
-/* ---------------- Markdown helpers ---------------- */
+/* ---------------- Markdown helpers (fallback only) ---------------- */
 function normalizeAnalysis(md: string) {
   let s = (md ?? "").trim();
-  // Clean up spacing between sections and lists
   s = s.replace(/\n(?=#{2,3}\s+)/g, "\n\n");
   s = s.replace(/(#{2,3}\s+(Insights|Recommendations|Risks|Actions|Summary))/gi, "\n\n$1");
   s = s.replace(/(#{2,3}\s+[A-Z]{2,}.*?)(\s+#{2,3}\s+)/g, "$1\n\n$2");
@@ -112,7 +119,6 @@ function normalizeAnalysis(md: string) {
 
 type BrainParse = { name: string; insights?: string; recommendations?: string };
 function parseBrains(md: string): BrainParse[] {
-  // Split on H2/H3 headers that look like CXO names
   const sections = md
     .split(/\n(?=#{2,3}\s+[A-Z]{2,}.*$)/gm)
     .map((s) => s.trim())
@@ -160,7 +166,10 @@ export default function DashboardPage() {
     console.log("CAIO Dashboard build:", BUILD_ID);
     const t = readTokenSafe();
     setToken(t);
-    if (!t) { setBusy(false); return; }
+    if (!t) {
+      setBusy(false);
+      return;
+    }
 
     (async () => {
       try {
@@ -172,7 +181,10 @@ export default function DashboardPage() {
           fetch(`${API_BASE}/api/profile`, { headers: { Authorization: `Bearer ${t}` }, cache: "no-store" }),
           20000
         );
-        if (res.status === 401) { setErr("Invalid token"); return; }
+        if (res.status === 401) {
+          setErr("Invalid token");
+          return;
+        }
         if (!res.ok) throw new Error(await res.text());
         const j = await res.json();
         setMe({
@@ -194,9 +206,21 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!err) return;
     const msg = String(err).toLowerCase();
-    if (msg.includes("invalid token") || msg.includes('"detail":"invalid token"') || msg.includes("unauthorized") || msg.includes("401")) {
-      try { localStorage.removeItem("access_token"); localStorage.removeItem("token"); document.cookie = "token=; Max-Age=0; path=/;"; } catch {}
-      if (!redirectingRef.current) { redirectingRef.current = true; router.replace("/login"); }
+    if (
+      msg.includes("invalid token") ||
+      msg.includes('"detail":"invalid token"') ||
+      msg.includes("unauthorized") ||
+      msg.includes("401")
+    ) {
+      try {
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("token");
+        document.cookie = "token=; Max-Age=0; path=/;";
+      } catch {}
+      if (!redirectingRef.current) {
+        redirectingRef.current = true;
+        router.replace("/login");
+      }
     }
   }, [err, router]);
 
@@ -254,7 +278,13 @@ export default function DashboardPage() {
             <div>
               <h1 className="text-2xl font-semibold">Dashboard</h1>
               <p className="opacity-85 mt-1">
-                {token ? <>Logged in as <b>{me?.email ?? "…"}</b> • {me?.is_admin ? "Admin" : "User"}</> : <>You’re not logged in.</>}
+                {token ? (
+                  <>
+                    Logged in as <b>{me?.email ?? "…"}</b> • {me?.is_admin ? "Admin" : "User"}
+                  </>
+                ) : (
+                  <>You’re not logged in.</>
+                )}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -333,16 +363,18 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
-  function onBrowseClick() { fileInputRef.current?.click(); }
-  function onFileChosen(f: File | undefined | null) { if (f) setFile(f); }
-  function onDragOver(e: React.DragEvent) { e.preventDefault(); e.stopPropagation(); setDragActive(true); }
-  function onDragLeave(e: React.DragEvent) { e.preventDefault(); e.stopPropagation(); setDragActive(false); }
-  function onDrop(e: React.DragEvent) {
-    e.preventDefault(); e.stopPropagation(); setDragActive(false);
-    const f = e.dataTransfer.files?.[0]; if (f) setFile(f);
+  function onBrowseClick() {
+    fileInputRef.current?.click();
+  }
+  function onFileChosen(f: File | undefined | null) {
+    if (f) setFile(f);
   }
 
-  function resetErrors() { setFriendlyErr(null); setLimit(null); setResult(null); }
+  function resetErrors() {
+    setFriendlyErr(null);
+    setLimit(null);
+    setResult(null);
+  }
 
   function formatUtcShort(iso?: string) {
     if (!iso) return "";
@@ -351,7 +383,9 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
       const hh = String(d.getUTCHours()).padStart(2, "0");
       const mm = String(d.getUTCMinutes()).padStart(2, "0");
       return `${hh}:${mm} UTC`;
-    } catch { return ""; }
+    } catch {
+      return "";
+    }
   }
 
   async function run() {
@@ -366,7 +400,6 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
       const fd = new FormData();
       if (text.trim()) fd.append("text", text.trim());
       if (file) fd.append("file", file);
-      // Ask all 5 brains on dashboard too (the backend will tier-cap depth)
       fd.append("brains", "CFO,CHRO,COO,CMO,CPO");
 
       const res = await withTimeout(
@@ -380,13 +413,19 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
 
       const raw = await res.text();
       let parsed: any = {};
-      try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
+      try {
+        parsed = raw ? JSON.parse(raw) : {};
+      } catch {
+        parsed = {};
+      }
 
-      // Daily limit banners from backend
       if (res.status === 429) {
         setLimit({
-          plan: parsed?.plan, used: parsed?.used, limit: parsed?.limit,
-          remaining: parsed?.remaining, reset_at: parsed?.reset_at,
+          plan: parsed?.plan,
+          used: parsed?.used,
+          limit: parsed?.limit,
+          remaining: parsed?.remaining,
+          reset_at: parsed?.reset_at,
           title: parsed?.title || "Daily limit reached",
           message: parsed?.message || "You’ve hit today’s usage limit.",
         });
@@ -406,24 +445,24 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
         return;
       }
       if (!res.ok) {
-        const message = parsed?.message || parsed?.detail || raw || "Something went wrong while analyzing your request.";
+        const message =
+          parsed?.message || parsed?.detail || raw || "Something went wrong while analyzing your request.";
         setResult({ status: "error", title: "Analysis Unavailable", message, action: "Please try again later." });
         return;
       }
 
-      if (parsed?.status === "demo") {
-        setResult({
-          status: "demo",
-          title: parsed.title || "Demo Mode Result",
-          summary: parsed.summary || "",
-          tip: parsed.tip,
-        });
-      } else {
-        setResult({ status: "ok", title: parsed.title || "Analysis Result", summary: parsed.summary || "", ...parsed });
-      }
+      // New backend returns { job_id, combined: {...} }
+      const combined: CombinedJSON | undefined = parsed?.combined;
+
+      setResult({
+        status: "ok",
+        title: parsed.title || "Analysis Result",
+        summary: parsed.summary || "",
+        combined,
+        ...parsed,
+      });
     } catch (e: any) {
       const msg = String(e?.message || e);
-      // Common fetch error surfaces as TypeError: Failed to fetch (CORS/network)
       setFriendlyErr(
         msg.includes("Failed to fetch")
           ? "Couldn’t reach the server. If this persists, check your API base URL or try again."
@@ -438,39 +477,24 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
     <section className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800 space-y-5">
       <h2 className="text-xl font-semibold">Quick analyze</h2>
 
-      {/* Limit banner */}
-      {limit && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-100">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h3 className="font-semibold">{limit.title || "Daily limit reached"}</h3>
-              <p className="text-sm mt-1">
-                {limit.message}
-                {typeof limit.used === "number" && typeof limit.limit === "number" && (
-                  <> You’ve used <b>{limit.used}</b> of <b>{limit.limit}</b> today.</>
-                )}
-                {limit.reset_at && <> Resets at <b>{formatUtcShort(limit.reset_at)}</b>.</>}
-              </p>
-            </div>
-            <button onClick={() => setLimit(null)} className="text-xs underline hover:no-underline">
-              Dismiss
-            </button>
-          </div>
-          <div className="mt-2">
-            <a href="/payments" className="inline-block text-xs px-2.5 py-1 rounded-md bg-amber-400/20 border border-amber-400/40 hover:bg-amber-400/30">
-              Upgrade for higher daily limits
-            </a>
-          </div>
-        </div>
-      )}
-
       {/* Dropzone */}
       <div
-        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(true); }}
-        onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDragActive(false); }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDragActive(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDragActive(false);
+        }}
         onDrop={(e) => {
-          e.preventDefault(); e.stopPropagation(); setDragActive(false);
-          const f = e.dataTransfer.files?.[0]; if (f) setFile(f);
+          e.preventDefault();
+          e.stopPropagation();
+          setDragActive(false);
+          const f = e.dataTransfer.files?.[0];
+          if (f) setFile(f);
         }}
         className={`rounded-xl border-2 border-dashed p-6 text-sm transition ${
           dragActive ? "border-blue-400 bg-blue-400/10" : "border-zinc-700 hover:border-zinc-500 bg-zinc-950/40"
@@ -484,7 +508,11 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
         <div className="flex flex-col items-center gap-2 text-center">
           <p className="opacity-85">Drag & drop a document here</p>
           <p className="text-xs opacity-60">PDF, DOCX, TXT…</p>
-          <button type="button" onClick={() => fileInputRef.current?.click()} className="mt-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="mt-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
+          >
             or browse files
           </button>
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => onFileChosen(e.target.files?.[0] ?? null)} />
@@ -543,9 +571,9 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
             </div>
           ) : (
             <GroupedReport
-              title={result.title || (result.status === "demo" ? "Demo Mode" : "Analysis Result")}
-              md={result.summary || ""}
-              demo={result.status === "demo"}
+              title={result.title || "Analysis Result"}
+              md={result.summary || ""} // fallback rendering if combined missing
+              combined={result.combined}
               tier={tier}
             />
           )}
@@ -560,104 +588,94 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
 function GroupedReport({
   title,
   md,
-  demo = false,
+  combined,
   tier,
 }: {
   title: string;
   md: string;
-  demo?: boolean;
+  combined?: CombinedJSON;
   tier: Tier;
 }) {
-  const normalized = normalizeAnalysis(md);
-  const brains = parseBrains(normalized);
   const desiredOrder = ["CFO", "CHRO", "COO", "CMO", "CPO"] as const;
 
-  const getByLabel = (label: string) =>
-    brains.find((b) => (b.name || "").trim().toUpperCase().startsWith(label)) || null;
+  // ---------- Prefer JSON from backend ----------
+  const jsonCollective = useMemo(() => {
+    const list =
+      combined?.aggregate?.collective ??
+      combined?.aggregate?.collective_insights ??
+      [];
+    // Show 2–3 items per your spec (min 2 when available)
+    return list.slice(0, Math.max(2, Math.min(3, list.length)));
+  }, [combined]);
 
-  /* ---- Demo preview block ---- */
-  if (demo) {
-    return (
-      <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
-        <h3 className="font-semibold">{title || "Demo Mode"}</h3>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-sm opacity-85">
-          This is a preview. Run a full analysis with a document for richer CFO/CHRO insights.
-        </div>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
-          <div className="text-lg font-medium">COO / CMO / CPO</div>
-          <p className="mt-2 text-sm opacity-80">
-            For more insights from COO, CMO, and CPO, please upgrade to <b>Pro</b>; to chat with CAIO, upgrade to <b>Pro+</b> or <b>Premium</b>.
-          </p>
-          <div className="mt-2 flex gap-2">
-            <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
-            <a href="/trial/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const jsonRoleTop1 = useMemo(() => {
+    const map: Record<string, string | undefined> = {};
+    const byRole = combined?.details_by_role || {};
+    desiredOrder.forEach((role) => {
+      const recs = byRole?.[role]?.recommendations || [];
+      map[role] = recs.length ? recs[0] : undefined;
+    });
+    return map;
+  }, [combined]);
 
-  /* ---- Non-demo: show recommendations only, tier-capped ---- */
+  // ---------- Fallback to markdown if JSON absent ----------
+  const fallbackBrains = useMemo(() => {
+    if (combined) return [];
+    const normalized = normalizeAnalysis(md);
+    const brains = parseBrains(normalized);
+    return brains;
+  }, [combined, md]);
+
+  const fallbackCollective = useMemo(() => {
+    if (combined) return [];
+    const blocks = fallbackBrains.map((b) => b.insights || "");
+    const all: string[] = [];
+    blocks.forEach((b) => extractListItems(b).forEach((x) => all.push(x)));
+    // Just take up to 3
+    return all.slice(0, Math.max(2, Math.min(3, all.length)));
+  }, [combined, fallbackBrains]);
+
   function RoleCard({
     label,
-    recommendations,
-    tier,
+    rec,
+    showUpsell = true,
   }: {
     label: string;
-    recommendations?: string;
-    tier: Tier;
+    rec?: string;
+    showUpsell?: boolean;
   }) {
-    const rawItems = extractListItems(recommendations || "");
-    const items = normalizeTextItems(rawItems);
-    const cap = tier === "demo" ? 1 : 3; // demo=1, pro/pro+=3
-    const show = items.slice(0, cap);
-
-    const showUpgradePlacard = tier === "demo";
-    const showChatUpsell = tier === "pro";
-
     return (
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
         <header className="flex items-center justify-between">
           <h4 className="text-lg font-medium">{label}</h4>
         </header>
 
-        {show.length ? (
+        {rec ? (
           <>
-            <div className="mt-1 text-sm font-semibold opacity-90">Recommendations</div>
-            <ol className="mt-2 list-decimal pl-6 space-y-1">
-              {show.map((it, i) => (
-                <li key={i} className="leading-7">
-                  <InlineMD text={it} />
-                </li>
-              ))}
-            </ol>
+            <div className="mt-1 text-sm font-semibold opacity-90">Recommendation</div>
+            <ul className="mt-2 list-disc pl-6 space-y-1">
+              <li className="leading-7">
+                <InlineMD text={rec} />
+              </li>
+            </ul>
           </>
         ) : (
           <div className="mt-2 text-sm opacity-70">No recommendations generated for this section.</div>
         )}
 
-        {showUpgradePlacard && (
+        {showUpsell && (
           <div className="mt-3 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
             <div className="mb-1 font-semibold">Unlock more for {label}</div>
             <div className="opacity-90">
               For more insights, upgrade to <b>Pro</b> — or if you want to chat, go for <b>Pro+</b> or <b>Premium</b>.
             </div>
             <div className="mt-2 flex gap-2">
-              <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">Upgrade</a>
-              <a href="/trial/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
-            </div>
-          </div>
-        )}
-
-        {showChatUpsell && (
-          <div className="mt-3 rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-[13px]">
-            <div className="mb-1 font-semibold">Chat unlock</div>
-            <div className="opacity-90">
-              Please try the Chat feature or upgrade to <b>Pro+</b> or <b>Premium</b> for full chat access.
-            </div>
-            <div className="mt-2 flex gap-2">
-              <a href="/trial/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">Try Chat</a>
-              <a href="/payments" className="rounded-md bg-sky-600 px-3 py-1 text-white hover:bg-sky-500">Upgrade</a>
+              <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">
+                Upgrade
+              </a>
+              <a href="/trial/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">
+                Try Chat
+              </a>
             </div>
           </div>
         )}
@@ -665,46 +683,55 @@ function GroupedReport({
     );
   }
 
-  // Collate top “collective insights” across brains (deduped, top 5)
-  const collective = useMemo(() => {
-    const blocks = brains.map((b) => b.insights || "");
-    const all: string[] = [];
-    blocks.forEach((b) => extractListItems(b).forEach((x) => all.push(x)));
-    const counts = new Map<string, { c: number; text: string }>();
-    for (const it of all) {
-      const key = it.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-      counts.set(key, { c: (counts.get(key)?.c ?? 0) + 1, text: it });
-    }
-    const ranked = [...counts.values()].sort((a, b) => b.c - a.c || b.text.length - a.text.length).map((x) => x.text);
-    return ranked.slice(0, 5);
-  }, [brains]);
-
   return (
     <div className="p-4 rounded-lg border border-zinc-700 bg-zinc-900/70 text-zinc-100 space-y-4">
       <h3 className="font-semibold">{title || "Analysis Result"}</h3>
 
-      {collective.length > 0 && (
-        <details open className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <summary className="cursor-pointer text-lg font-medium select-none">Collective Insights (Top 5)</summary>
-          <ol className="mt-3 list-decimal pl-6 space-y-1">
-            {collective.map((it, i) => (
-              <li key={i} className="leading-7"><InlineMD text={it} /></li>
+      {/* Collective insights (2–3) */}
+      {(jsonCollective.length > 0 || fallbackCollective.length > 0) && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+          <div className="text-lg font-medium">Collective Insights</div>
+          <ol className="mt-2 list-decimal pl-6 space-y-1">
+            {(jsonCollective.length > 0 ? jsonCollective : fallbackCollective).map((it, i) => (
+              <li key={i} className="leading-7">
+                <InlineMD text={it} />
+              </li>
             ))}
           </ol>
-        </details>
+
+          {/* Upsell under collective */}
+          <div className="mt-3 rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-[13px]">
+            <div className="mb-1 font-semibold">Want deeper analysis?</div>
+            <div className="opacity-90">
+              Upgrade for full CXO breakdowns and more recommendations across roles.
+            </div>
+            <div className="mt-2 flex gap-2">
+              <a href="/payments" className="rounded-md bg-sky-600 px-3 py-1 text-white hover:bg-sky-500">
+                Upgrade
+              </a>
+              <a href="/trial/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">
+                Try Chat
+              </a>
+            </div>
+          </div>
+        </div>
       )}
 
+      {/* Per-role 1 recommendation with upsell */}
       <div className="space-y-3">
-        {desiredOrder.map((label) => {
-          const data = getByLabel(label);
-          return (
-            <RoleCard
-              key={label}
-              label={label}
-              recommendations={data?.recommendations}
-              tier={tier}
-            />
-          );
+        {(["CFO", "CHRO", "COO", "CMO", "CPO"] as const).map((label) => {
+          let rec: string | undefined = jsonRoleTop1[label];
+
+          if (!combined) {
+            // fallback to markdown parse, show first bullet from that role's recommendations
+            const normalized = normalizeAnalysis(md);
+            const brains = parseBrains(normalized);
+            const b = brains.find((x) => (x.name || "").toUpperCase().startsWith(label));
+            const items = extractListItems(b?.recommendations || "");
+            rec = items[0];
+          }
+
+          return <RoleCard key={label} label={label} rec={rec} showUpsell={true} />;
         })}
       </div>
     </div>
