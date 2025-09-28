@@ -3,26 +3,27 @@ import { useEffect, useMemo, useState } from "react";
 
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
-  "https://caio-backend.onrender.com";
+  "https://caio-orchestrator.onrender.com";
 
 /* ---------------- Types ---------------- */
 type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
 
 type Me = {
   email: string;
-  tier: Tier;
+  tier: Tier | string;
   is_admin?: boolean;
   is_paid?: boolean;
   created_at?: string | null;
 };
 
 type RosterItem = {
+  id: number;
   email: string;
+  username?: string | null;
   tier: Tier | string;
-  created_at?: string | null;
+  created_on?: string | null;
   last_seen?: string | null;
   total_sessions?: number;
-  spend_usd?: number;
 };
 
 type RosterResp = {
@@ -32,10 +33,13 @@ type RosterResp = {
   items: RosterItem[];
 };
 
-type Summary = {
-  total_users: number;
+type SummaryResp = {
+  real_users: number;
+  test_users: number;
+  admins: number;
   demo: number;
   pro: number;
+  pro_plus: number;
   premium: number;
 };
 
@@ -55,15 +59,6 @@ function fmtDate(s?: string | null) {
     return new Date(s).toLocaleString();
   } catch {
     return s!;
-  }
-}
-
-function fmtUSD(v?: number) {
-  const n = Number.isFinite(v as number) ? (v as number) : 0;
-  try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 4 }).format(n);
-  } catch {
-    return `$${n.toFixed(4)}`;
   }
 }
 
@@ -105,7 +100,7 @@ export default function AdminUsers() {
   const [busy, setBusy] = useState(false);
 
   // KPIs
-  const [summary, setSummary] = useState<Summary | null>(null);
+  const [summary, setSummary] = useState<SummaryResp | null>(null);
 
   const token = useMemo(getToken, []);
 
@@ -138,7 +133,7 @@ export default function AdminUsers() {
     })();
   }, [token]);
 
-  const isAdmin = me?.tier === "admin";
+  const isAdmin = !!(me?.is_admin || me?.tier === "admin" || me?.tier === "premium");
 
   async function loadSummary() {
     if (!token) return;
@@ -147,11 +142,8 @@ export default function AdminUsers() {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
-      if (!r.ok) {
-        setSummary(null); // we'll fall back to roster-derived counts
-        return;
-      }
-      const j: Summary = await r.json();
+      if (!r.ok) { setSummary(null); return; }
+      const j: SummaryResp = await r.json();
       setSummary(j);
     } catch {
       setSummary(null);
@@ -163,9 +155,11 @@ export default function AdminUsers() {
     setBusy(true);
     setErr(null);
     try {
-      const u = new URL(`${API_BASE}/api/admin/users/roster`);
+      const u = new URL(`${API_BASE}/api/admin/users`);
       u.searchParams.set("page", String(p));
       u.searchParams.set("page_size", String(ps));
+      u.searchParams.set("include_test", "false");
+      u.searchParams.set("include_admins", "false");
       if (query.trim()) u.searchParams.set("q", query.trim());
 
       const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
@@ -200,29 +194,28 @@ export default function AdminUsers() {
   const items = data?.items || [];
 
   // Fallback KPIs from current page if /summary isn’t available
-  const derived = useMemo(() => {
-  const counts = { demo: 0, pro: 0, pro_plus: 0, premium: 0 };
-  for (const u of items) {
-    const t = String(u.tier || "").toLowerCase();
-    if (t === "admin" || t === "premium") counts.premium += 1;
-    else if (t === "pro_plus") counts.pro_plus += 1;
-    else if (t === "pro") counts.pro += 1;
-    else counts.demo += 1;
-  }
-  return counts;
-}, [items]);
+  const derived = (() => {
+    const counts = { demo: 0, pro: 0, pro_plus: 0, premium: 0 };
+    for (const u of items) {
+      const t = String(u.tier || "").toLowerCase();
+      if (t === "admin" || t === "premium") counts.premium += 1;
+      else if (t === "pro_plus") counts.pro_plus += 1;
+      else if (t === "pro") counts.pro += 1;
+      else counts.demo += 1;
+    }
+    return counts;
+  })();
 
-  const k_total   = summary?.total_users ?? total;
+  const k_total   = summary ? (summary.real_users + summary.test_users + summary.admins) : total;
   const k_demo    = summary?.demo ?? derived.demo;
   const k_pro     = summary?.pro ?? derived.pro;
-  const k_proplus = (summary as any)?.pro_plus ?? derived.pro_plus;
+  const k_proplus = summary?.pro_plus ?? derived.pro_plus;
   const k_premium = summary?.premium ?? derived.premium;
 
   return (
     <main style={{ minHeight: "100vh", background: "#0b0f1a", color: "#e5e7eb", padding: 24 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
         <h1 style={{ margin: 0 }}>Admin — Users</h1>
-        {/* Admin Mode badge */}
         {isAdmin && (
           <span
             title="You are viewing Admin-only data"
@@ -363,17 +356,17 @@ export default function AdminUsers() {
             ) : (
               items.map((u) => {
                 const sessions = Number.isFinite(u.total_sessions as number) ? (u.total_sessions as number) : 0;
-                const spend = Number.isFinite(u.spend_usd as number) ? (u.spend_usd as number) : 0;
                 return (
-                  <tr key={u.email} style={{ borderTop: "1px solid #243044" }}>
+                  <tr key={u.id ?? u.email} style={{ borderTop: "1px solid #243044" }}>
                     <td style={td}>
                       <div style={{ fontWeight: 600 }}>{u.email}</div>
+                      {u.username && <div style={{ opacity: 0.75, fontSize: 12 }}>{u.username}</div>}
                     </td>
                     <td style={td}>{tierBadge(u.tier)}</td>
-                    <td style={td}>{fmtDate(u.created_at)}</td>
+                    <td style={td}>{fmtDate(u.created_on)}</td>
                     <td style={td}>{fmtDate(u.last_seen)}</td>
                     <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{sessions}</td>
-                    <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtUSD(spend)}</td>
+                    <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>—</td>
                   </tr>
                 );
               })
