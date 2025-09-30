@@ -1,188 +1,135 @@
 "use client";
 
-import { Suspense } from "react";
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { useState } from "react";
 
-/* Force dynamic so build-time prerender won't evaluate client hooks */
-export const dynamic = "force-dynamic";
-
-/* ---------- tiny self-contained auth utils ---------- */
 const API_BASE =
-  (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
-  "https://caio-orchestrator.onrender.com"; // updated fallback to your new orchestrator
+  (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim().replace(/\/+$/,"")) ||
+  "https://caio-orchestrator.onrender.com";
 
-type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
+// Where non-admin users land after login (set in Vercel if you want something else)
+const POST_LOGIN_PATH =
+  (process.env.NEXT_PUBLIC_POST_LOGIN_PATH && process.env.NEXT_PUBLIC_POST_LOGIN_PATH.trim()) ||
+  "/chat"; // ← change to your normal user home
 
-function saveToken(tok: string) {
-  try {
-    localStorage.setItem("access_token", tok);
-    localStorage.setItem("token", tok);
-    document.cookie = `token=${encodeURIComponent(tok)}; path=/; SameSite=Lax`;
-  } catch {}
-}
-function getToken(): string {
-  try {
-    return (
-      localStorage.getItem("access_token") ||
-      localStorage.getItem("token") ||
-      ""
-    );
-  } catch {
-    return "";
-  }
-}
-function clearToken() {
-  try {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("token");
-    document.cookie = "token=; Max-Age=0; path=/";
-  } catch {}
-}
-async function fetchProfileByToken(tok: string) {
-  const r = await fetch(`${API_BASE}/api/profile`, {
-    headers: { Authorization: `Bearer ${tok}` },
-  });
-  return r;
-}
-function routeForTier(t: Tier): string {
-  if (t === "admin" || t === "premium" || t === "pro_plus") return "/premium/chat";
-  return "/dashboard";
-}
-
-/* ------------------ page ------------------ */
-function LoginInner() {
-  const router = useRouter();
+export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const redirectOnceRef = useRef(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  // If already logged in, hop once to the right place
-  useEffect(() => {
-    const tok = getToken();
-    if (!tok || redirectOnceRef.current) return;
-    (async () => {
-      try {
-        const r = await fetchProfileByToken(tok);
-        if (r.ok) {
-          const j = await r.json();
-          redirectOnceRef.current = true;
-          router.replace(routeForTier((j?.tier as Tier) || "demo"));
-        } else {
-          clearToken();
-        }
-      } catch {
-        /* ignore */
-      }
-    })();
-  }, [router]);
-
-  const onSubmit = async (e: React.FormEvent) => {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     setBusy(true);
-    setError(null);
+    setErr(null);
 
     try {
-      const resp = await fetch(`${API_BASE}/api/login`, {
+      // 1) Login
+      const r = await fetch(`${API_BASE}/api/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        //credentials: "include",
-        body: JSON.stringify({ email: email.trim(), password }),
+        credentials: "include", // allow backend to set cookie
+        body: JSON.stringify({ email, password }),
       });
 
-      const raw = await resp.text();
-      let data: any = {};
-      try { data = raw ? JSON.parse(raw) : {}; } catch {}
-
-      if (!resp.ok) {
-        clearToken();
-        throw new Error(
-          data?.detail || data?.message || raw || "Login failed. Please check your credentials."
-        );
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        try { msg = (await r.json())?.detail || msg; } catch {}
+        throw new Error(msg);
       }
 
-      const tok: string | undefined = data?.access_token;
-      if (!tok) {
-        clearToken();
-        throw new Error("No access token returned by server.");
-      }
-      saveToken(tok);
+      const data = await r.json(); // { access_token }
+      const token: string | undefined = data?.access_token;
+      if (!token) throw new Error("No token returned");
 
-      const p = await fetchProfileByToken(tok);
-      if (p.ok) {
-        const j = await p.json();
-        router.replace(routeForTier((j?.tier as Tier) || "demo"));
-      } else {
-        router.replace("/dashboard");
+      // 2) Clear old token, store new token (cookie + localStorage)
+      try { localStorage.removeItem("access_token"); } catch {}
+      document.cookie = "token=; Path=/; Max-Age=0; SameSite=Lax";
+
+      localStorage.setItem("access_token", token);
+      document.cookie = [
+        `token=${encodeURIComponent(token)}`,
+        "Path=/",
+        "Max-Age=2592000", // 30 days
+        "SameSite=Lax",
+        location.protocol === "https:" ? "Secure" : ""
+      ].join("; ");
+
+      // 3) Fetch profile to decide where to go
+      const pr = await fetch(`${API_BASE}/api/profile`, {
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!pr.ok) {
+        // If profile fails, default to non-admin path
+        window.location.assign(POST_LOGIN_PATH);
+        return;
       }
-    } catch (err: any) {
-      setError(err?.message ?? "Login failed");
+      const profile = await pr.json();
+      const isAdmin = !!(profile?.is_admin || profile?.tier === "admin" || profile?.tier === "premium");
+
+      // 4) Route based on role
+      window.location.assign(isAdmin ? "/admin" : POST_LOGIN_PATH);
+    } catch (e: any) {
+      setErr(e?.message || "Login failed");
     } finally {
       setBusy(false);
     }
-  };
+  }
 
   return (
-    <main className="min-h-screen w-full bg-black text-white flex items-start justify-center pt-20 px-4">
-      <div className="max-w-md w-full rounded-2xl bg-neutral-900/80 p-6 shadow-xl">
-        <h1 className="text-2xl font-semibold mb-4">Log in to CAIO</h1>
+    <main className="min-h-screen flex items-center justify-center bg-[#0b0f1a] text-gray-200 p-6">
+      <div className="w-full max-w-md space-y-4">
+        <h1 className="text-2xl font-semibold">Log in</h1>
 
-        <form onSubmit={onSubmit} className="space-y-4" noValidate>
-          <div>
-            <label className="block mb-1 text-sm text-neutral-300">Email</label>
+        {err && (
+          <div className="rounded-lg border border-red-700 bg-red-900/30 px-3 py-2 text-sm">
+            {err}
+          </div>
+        )}
+
+        <form onSubmit={onSubmit} className="space-y-3">
+          <div className="space-y-1">
+            <label className="text-sm opacity-80">Email</label>
             <input
               type="email"
-              className="w-full rounded px-3 py-2 bg-neutral-800 text-white outline-none"
+              required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              required
+              className="w-full rounded-lg border border-[#243044] bg-[#0e1320] px-3 py-2 outline-none"
+              placeholder="you@example.com"
               autoComplete="email"
-              autoCapitalize="none"
-              spellCheck={false}
             />
           </div>
 
-          <div>
-            <label className="block mb-1 text-sm text-neutral-300">Password</label>
+          <div className="space-y-1">
+            <label className="text-sm opacity-80">Password</label>
             <input
               type="password"
-              className="w-full rounded px-3 py-2 bg-neutral-800 text-white outline-none"
+              required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              required
+              className="w-full rounded-lg border border-[#243044] bg-[#0e1320] px-3 py-2 outline-none"
+              placeholder="••••••••"
               autoComplete="current-password"
             />
           </div>
 
-          {error && <p className="text-red-400 text-sm">{error}</p>}
-
           <button
             type="submit"
             disabled={busy}
-            className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-60 transition"
+            className="w-full rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60 px-3 py-2 font-medium"
           >
-            {busy ? "Signing in…" : "Log in"}
+            {busy ? "Signing in…" : "Sign in"}
           </button>
         </form>
 
-        <p className="mt-4 text-sm text-neutral-400">
-          New here?{" "}
-          <Link href="/signup" className="underline text-blue-400 hover:text-blue-300">
-            Create an account
-          </Link>
+        {/* Helpful debug hint */}
+        <p className="text-xs opacity-60">
+          API: <code>{API_BASE}</code> • Post-login: <code>{POST_LOGIN_PATH}</code>
         </p>
       </div>
     </main>
-  );
-}
-
-export default function LoginPage() {
-  return (
-    <Suspense fallback={<div className="p-6 text-white">Loading…</div>}>
-      <LoginInner />
-    </Suspense>
   );
 }
