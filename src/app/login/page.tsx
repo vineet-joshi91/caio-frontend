@@ -9,7 +9,7 @@ const API_BASE =
 // Where non-admin users land after login (set in Vercel if you want something else)
 const POST_LOGIN_PATH =
   (process.env.NEXT_PUBLIC_POST_LOGIN_PATH && process.env.NEXT_PUBLIC_POST_LOGIN_PATH.trim()) ||
-  "/chat"; // ← change to your normal user home
+  "/dashboard"; // ← change to your normal user home
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
