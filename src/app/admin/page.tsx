@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 
+/* ---------------- Config ---------------- */
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
   "https://caio-orchestrator.onrender.com";
@@ -16,31 +17,39 @@ type Me = {
   created_at?: string | null;
 };
 
-type RosterItem = {
-  id: number;
-  email: string;
-  username?: string | null;
-  tier: Tier | string;
-  created_on?: string | null;
-  last_seen?: string | null;
-  total_sessions?: number;
+type KPIResp = {
+  total_users: number;
+  new_users_7d: number;
+  dau_today: number;
+  wau_7d: number;
+  mau_30d: number;
+  latest_usage_log_ts: string | null;
 };
 
-type RosterResp = {
-  page: number;
-  page_size: number;
+type UsersResp = {
   total: number;
-  items: RosterItem[];
+  items: Array<{
+    user_id: number;
+    email: string;
+    tier: Tier | string;
+    is_admin?: boolean;
+    is_test?: boolean;
+    is_paid?: boolean;
+    billing_currency?: string | null;
+    plan_tier?: string | null;
+    plan_status?: string | null;
+    created_at?: string | null;
+    last_active_at?: string | null;
+    events_30d?: number;
+  }>;
 };
 
-type SummaryResp = {
-  real_users: number;
-  test_users: number;
-  admins: number;
-  demo: number;
-  pro: number;
-  pro_plus: number;
-  premium: number;
+type UsageDailyResp = {
+  items: Array<{ day: string; endpoint: string; events: number; dau: number }>;
+};
+
+type SignupsResp = {
+  items: Array<{ day: string; signups: number }>;
 };
 
 /* ---------------- Utils ---------------- */
@@ -55,15 +64,12 @@ function getToken(): string | null {
 
 function fmtDate(s?: string | null) {
   if (!s) return "—";
-  try {
-    return new Date(s).toLocaleString();
-  } catch {
-    return s!;
-  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? s! : d.toLocaleString();
 }
 
 function tierBadge(t: Tier | string) {
-  const norm = String(t).toLowerCase();
+  const norm = String(t || "").toLowerCase();
   const label =
     norm === "admin" || norm === "premium" ? "Premium" :
     norm === "pro_plus" ? "Pro+" :
@@ -87,23 +93,28 @@ function tierBadge(t: Tier | string) {
 }
 
 /* ---------------- Page ---------------- */
-export default function AdminUsers() {
+export default function AdminDashboard() {
+  // auth/profile
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  // table state
-  const [q, setQ] = useState("");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const [data, setData] = useState<RosterResp | null>(null);
-  const [busy, setBusy] = useState(false);
+  // kpis & series
+  const [kpis, setKpis] = useState<KPIResp | null>(null);
+  const [usage, setUsage] = useState<UsageDailyResp["items"]>([]);
+  const [signups, setSignups] = useState<SignupsResp["items"]>([]);
 
-  // KPIs
-  const [summary, setSummary] = useState<SummaryResp | null>(null);
+  // users table
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState<"last_active_at_desc" | "created_at_desc">("last_active_at_desc");
+  const [limit, setLimit] = useState(25);
+  const [offset, setOffset] = useState(0);
+  const [users, setUsers] = useState<UsersResp | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const token = useMemo(getToken, []);
 
+  // load profile (and enforce admin)
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -117,6 +128,7 @@ export default function AdminUsers() {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const j = await r.json();
         setMe({
           email: j.email,
@@ -135,40 +147,46 @@ export default function AdminUsers() {
 
   const isAdmin = !!(me?.is_admin || me?.tier === "admin" || me?.tier === "premium");
 
-  async function loadSummary() {
-    if (!token) return;
-    try {
-      const r = await fetch(`${API_BASE}/api/admin/users/summary`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      if (!r.ok) { setSummary(null); return; }
-      const j: SummaryResp = await r.json();
-      setSummary(j);
-    } catch {
-      setSummary(null);
-    }
-  }
+  // load kpis, users, series
+  useEffect(() => {
+    if (!isAdmin || !token) return;
+    (async () => {
+      setErr(null);
+      try {
+        const headers = { Authorization: `Bearer ${token}` };
 
-  async function loadRoster(p = page, ps = pageSize, query = q) {
+        const [k, u, ud, s] = await Promise.all([
+          fetch(`${API_BASE}/api/admin/kpis`, { headers, cache: "no-store" }).then(r => r.json()),
+          fetch(`${API_BASE}/api/admin/users?sort=${sort}&limit=${limit}&offset=${offset}${q ? `&q=${encodeURIComponent(q)}` : ""}`, { headers, cache: "no-store" }).then(r => r.json()),
+          fetch(`${API_BASE}/api/admin/usage-daily?days=30`, { headers, cache: "no-store" }).then(r => r.json()),
+          fetch(`${API_BASE}/api/admin/signups-30d`, { headers, cache: "no-store" }).then(r => r.json()),
+        ]);
+
+        setKpis(k);
+        setUsers(u);
+        setUsage(ud.items || []);
+        setSignups(s.items || []);
+      } catch (e: any) {
+        setErr(String(e?.message || e) || "Failed to load admin data.");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, token, sort, limit, offset]);
+
+  async function reloadUsers(newQ = q, newLimit = limit, newOffset = 0) {
     if (!token) return;
     setBusy(true);
     setErr(null);
     try {
-      const u = new URL(`${API_BASE}/api/admin/users`);
-      u.searchParams.set("page", String(p));
-      u.searchParams.set("page_size", String(ps));
-      u.searchParams.set("include_test", "false");
-      u.searchParams.set("include_admins", "false");
-      if (query.trim()) u.searchParams.set("q", query.trim());
-
-      const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
-      const body = await r.text();
-      if (!r.ok) throw new Error(body || `HTTP ${r.status}`);
-      const j: RosterResp = JSON.parse(body || "{}");
-      setData(j);
-      setPage(p);
-      setPageSize(ps);
+      const headers = { Authorization: `Bearer ${token}` };
+      const u = await fetch(
+        `${API_BASE}/api/admin/users?sort=${sort}&limit=${newLimit}&offset=${newOffset}${newQ ? `&q=${encodeURIComponent(newQ)}` : ""}`,
+        { headers, cache: "no-store" }
+      ).then(r => r.json());
+      setUsers(u);
+      setOffset(newOffset);
+      setLimit(newLimit);
+      setQ(newQ);
     } catch (e: any) {
       setErr(String(e?.message || e) || "Failed to load users.");
     } finally {
@@ -176,46 +194,15 @@ export default function AdminUsers() {
     }
   }
 
-  useEffect(() => {
-    if (!isAdmin) return;
-    (async () => {
-      await Promise.all([loadSummary(), loadRoster(1, pageSize, q)]);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin]);
-
-  function onSearch(e: React.FormEvent) {
-    e.preventDefault();
-    loadRoster(1, pageSize, q);
-  }
-
-  const total = data?.total ?? 0;
-  const maxPage = Math.max(1, Math.ceil(total / (pageSize || 1)));
-  const items = data?.items || [];
-
-  // Fallback KPIs from current page if /summary isn’t available
-  const derived = (() => {
-    const counts = { demo: 0, pro: 0, pro_plus: 0, premium: 0 };
-    for (const u of items) {
-      const t = String(u.tier || "").toLowerCase();
-      if (t === "admin" || t === "premium") counts.premium += 1;
-      else if (t === "pro_plus") counts.pro_plus += 1;
-      else if (t === "pro") counts.pro += 1;
-      else counts.demo += 1;
-    }
-    return counts;
-  })();
-
-  const k_total   = summary ? (summary.real_users + summary.test_users + summary.admins) : total;
-  const k_demo    = summary?.demo ?? derived.demo;
-  const k_pro     = summary?.pro ?? derived.pro;
-  const k_proplus = summary?.pro_plus ?? derived.pro_plus;
-  const k_premium = summary?.premium ?? derived.premium;
+  const total = users?.total ?? 0;
+  const items = users?.items ?? [];
+  const page = Math.floor(offset / (limit || 1)) + 1;
+  const maxPage = Math.max(1, Math.ceil(total / (limit || 1)));
 
   return (
     <main style={{ minHeight: "100vh", background: "#0b0f1a", color: "#e5e7eb", padding: 24 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-        <h1 style={{ margin: 0 }}>Admin — Users</h1>
+        <h1 style={{ margin: 0 }}>Admin — Overview</h1>
         {isAdmin && (
           <span
             title="You are viewing Admin-only data"
@@ -234,12 +221,13 @@ export default function AdminUsers() {
       </div>
 
       {/* KPI tiles */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, margin: "12px 0 16px" }}>
-        <Tile title="Total users" value={String(k_total)} />
-        <Tile title="Demo" value={String(k_demo)} />
-        <Tile title="Pro" value={String(k_pro)} />
-        <Tile title="Pro+" value={String(k_proplus)} />
-        <Tile title="Premium (Admin+Premium)" value={String(k_premium)} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12, margin: "12px 0 16px" }}>
+        <Tile title="Total users" value={String(kpis?.total_users ?? 0)} />
+        <Tile title="New (7d)" value={String(kpis?.new_users_7d ?? 0)} />
+        <Tile title="DAU (today)" value={String(kpis?.dau_today ?? 0)} />
+        <Tile title="WAU (7d)" value={String(kpis?.wau_7d ?? 0)} />
+        <Tile title="MAU (30d)" value={String(kpis?.mau_30d ?? 0)} />
+        <Tile title="Latest activity" value={kpis?.latest_usage_log_ts ? fmtDate(kpis.latest_usage_log_ts) : "—"} />
       </div>
 
       {loading && <div style={{ margin: "10px 0" }}>Loading…</div>}
@@ -249,8 +237,14 @@ export default function AdminUsers() {
         </div>
       )}
 
-      {/* controls */}
-      <form onSubmit={onSearch} style={{ display: "flex", gap: 12, alignItems: "flex-end", marginBottom: 12 }}>
+      {/* Users controls */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          reloadUsers(q, limit, 0);
+        }}
+        style={{ display: "flex", gap: 12, alignItems: "flex-end", marginBottom: 12 }}
+      >
         <div style={{ flex: 1 }}>
           <div style={{ opacity: 0.8, fontSize: 12 }}>Search by email</div>
           <input
@@ -268,15 +262,38 @@ export default function AdminUsers() {
             }}
           />
         </div>
+
+        <div>
+          <div style={{ opacity: 0.8, fontSize: 12 }}>Sort</div>
+          <select
+            value={sort}
+            onChange={(e) => {
+              const s = (e.target.value as typeof sort) || "last_active_at_desc";
+              setSort(s);
+              reloadUsers(q, limit, 0);
+            }}
+            style={{
+              marginTop: 4,
+              padding: "10px 12px",
+              borderRadius: 10,
+              background: "#0b0f1a",
+              border: "1px solid #243044",
+              color: "#e5e7eb",
+            }}
+          >
+            <option value="last_active_at_desc">Last active ↓</option>
+            <option value="created_at_desc">Created ↓</option>
+          </select>
+        </div>
+
         <div>
           <div style={{ opacity: 0.8, fontSize: 12 }}>Page size</div>
           <select
-            value={pageSize}
+            value={limit}
             onChange={(e) => {
               const ps = parseInt(e.target.value || "25", 10);
-              setPageSize(ps);
-              setPage(1);
-              loadRoster(1, ps, q);
+              setLimit(ps);
+              reloadUsers(q, ps, 0);
             }}
             style={{
               marginTop: 4,
@@ -294,6 +311,7 @@ export default function AdminUsers() {
             ))}
           </select>
         </div>
+
         <button
           type="submit"
           disabled={busy}
@@ -312,8 +330,8 @@ export default function AdminUsers() {
           type="button"
           onClick={() => {
             setQ("");
-            setPage(1);
-            loadRoster(1, pageSize, "");
+            setSort("last_active_at_desc");
+            reloadUsers("", limit, 0);
           }}
           style={{
             padding: "10px 14px",
@@ -327,7 +345,7 @@ export default function AdminUsers() {
         </button>
       </form>
 
-      {/* table */}
+      {/* Users table */}
       <div style={{ overflow: "auto", border: "1px solid #243044", borderRadius: 10 }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -335,41 +353,37 @@ export default function AdminUsers() {
               <th style={th}>Email</th>
               <th style={th}>Tier</th>
               <th style={th}>Created</th>
-              <th style={th}>Last seen</th>
-              <th style={{ ...th, textAlign: "right" }}>Total sessions</th>
-              <th style={{ ...th, textAlign: "right" }}>Tokens used (money)</th>
+              <th style={th}>Last active</th>
+              <th style={{ ...th, textAlign: "right" }}>30d events</th>
             </tr>
           </thead>
           <tbody>
             {busy && items.length === 0 ? (
               <tr>
-                <td style={td} colSpan={6}>
+                <td style={td} colSpan={5}>
                   Loading…
                 </td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
-                <td style={td} colSpan={6}>
+                <td style={td} colSpan={5}>
                   No users found
                 </td>
               </tr>
             ) : (
-              items.map((u) => {
-                const sessions = Number.isFinite(u.total_sessions as number) ? (u.total_sessions as number) : 0;
-                return (
-                  <tr key={u.id ?? u.email} style={{ borderTop: "1px solid #243044" }}>
-                    <td style={td}>
-                      <div style={{ fontWeight: 600 }}>{u.email}</div>
-                      {u.username && <div style={{ opacity: 0.75, fontSize: 12 }}>{u.username}</div>}
-                    </td>
-                    <td style={td}>{tierBadge(u.tier)}</td>
-                    <td style={td}>{fmtDate(u.created_on)}</td>
-                    <td style={td}>{fmtDate(u.last_seen)}</td>
-                    <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{sessions}</td>
-                    <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>—</td>
-                  </tr>
-                );
-              })
+              items.map((u) => (
+                <tr key={u.user_id ?? u.email} style={{ borderTop: "1px solid #243044" }}>
+                  <td style={td}>
+                    <div style={{ fontWeight: 600 }}>{u.email}</div>
+                  </td>
+                  <td style={td}>{tierBadge(u.tier)}</td>
+                  <td style={td}>{fmtDate(u.created_at)}</td>
+                  <td style={td}>{fmtDate(u.last_active_at)}</td>
+                  <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    {u.events_30d ?? 0}
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>
@@ -384,48 +398,72 @@ export default function AdminUsers() {
           <button
             onClick={() => {
               if (page <= 1 || busy) return;
-              const p = page - 1;
-              setPage(p);
-              loadRoster(p, pageSize, q);
+              const newOffset = Math.max(0, offset - limit);
+              reloadUsers(q, limit, newOffset);
             }}
             disabled={busy || page <= 1}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 8,
-              background: "#111827",
-              border: "1px solid #243044",
-              color: "#e5e7eb",
-              opacity: busy || page <= 1 ? 0.6 : 1,
-            }}
+            style={btnPager(busy || page <= 1)}
           >
             Prev
           </button>
           <button
             onClick={() => {
               if (page >= maxPage || busy) return;
-              const p = page + 1;
-              setPage(p);
-              loadRoster(p, pageSize, q);
+              const newOffset = offset + limit;
+              reloadUsers(q, limit, newOffset);
             }}
             disabled={busy || page >= maxPage}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 8,
-              background: "#111827",
-              border: "1px solid #243044",
-              color: "#e5e7eb",
-              opacity: busy || page >= maxPage ? 0.6 : 1,
-            }}
+            style={btnPager(busy || page >= maxPage)}
           >
             Next
           </button>
         </div>
       </div>
+
+      {/* Usage + Signups */}
+      <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginTop: 24 }}>
+        <div>
+          <h2 style={{ marginBottom: 8 }}>Usage (last 30 days)</h2>
+          <table width="100%" cellPadding={8} style={{ borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "1px solid #444" }}>
+                <th>Day</th><th>Endpoint</th><th>Events</th><th>DAU</th>
+              </tr>
+            </thead>
+            <tbody>
+              {usage.map((r, i) => (
+                <tr key={`${r.day}-${r.endpoint}-${i}`} style={{ borderBottom: "1px solid #333" }}>
+                  <td>{r.day}</td><td>{r.endpoint}</td><td>{r.events}</td><td>{r.dau}</td>
+                </tr>
+              ))}
+              {usage.length === 0 && <tr><td colSpan={4} style={{ opacity: 0.7 }}>No data.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h2 style={{ marginBottom: 8 }}>Signups (last 30 days)</h2>
+          <table width="100%" cellPadding={8} style={{ borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "1px solid #444" }}>
+                <th>Day</th><th>Signups</th>
+              </tr>
+            </thead>
+            <tbody>
+              {signups.map((r, i) => (
+                <tr key={`${r.day}-${i}`} style={{ borderBottom: "1px solid #333" }}>
+                  <td>{r.day}</td><td>{r.signups}</td>
+                </tr>
+              ))}
+              {signups.length === 0 && <tr><td colSpan={2} style={{ opacity: 0.7 }}>No data.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </main>
   );
 }
 
-/* ---------------- Tiny tile ---------------- */
+/* ---------------- Tiny components/styles ---------------- */
 function Tile({ title, value }: { title: string; value: string }) {
   return (
     <div style={{ border: "1px solid #243044", background: "#0e1320", borderRadius: 10, padding: 12 }}>
@@ -435,6 +473,17 @@ function Tile({ title, value }: { title: string; value: string }) {
   );
 }
 
+function btnPager(disabled: boolean): React.CSSProperties {
+  return {
+    padding: "8px 12px",
+    borderRadius: 8,
+    background: "#111827",
+    border: "1px solid #243044",
+    color: "#e5e7eb",
+    opacity: disabled ? 0.6 : 1,
+  };
+}
+
 const th: React.CSSProperties = {
   textAlign: "left",
   padding: "10px 12px",
@@ -442,4 +491,5 @@ const th: React.CSSProperties = {
   fontSize: 13,
   borderBottom: "1px solid #243044",
 };
+
 const td: React.CSSProperties = { padding: "10px 12px", fontSize: 13 };
