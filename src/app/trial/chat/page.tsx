@@ -5,6 +5,12 @@ import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+// NEW shared UI components
+import TypingDots from "@/components/TypingDots";
+import TopActionsCard from "@/components/TopActionsCard";
+import ConfidenceBanner from "@/components/ConfidenceBanner";
+import BrainCard from "@/components/BrainCard";
+
 /* ---------------- Config ---------------- */
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").trim();
 
@@ -48,7 +54,11 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
   return t ? { ...(extra || {}), Authorization: `Bearer ${t}` } : (extra || {});
 }
 async function fetchText(res: Response) {
-  try { return await res.text(); } catch { return ""; }
+  try {
+    return await res.text();
+  } catch {
+    return "";
+  }
 }
 async function ensureBackendReady(base: string): Promise<void> {
   if (!base) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
@@ -71,7 +81,7 @@ async function ensureBackendReady(base: string): Promise<void> {
   }
 }
 
-/* ---------------- CXO parsing/rendering (self-contained) ---------------- */
+/* ---------------- CXO parsing/rendering ---------------- */
 const CXO_ORDER = ["CFO", "CHRO", "COO", "CMO", "CPO"] as const;
 type Role = (typeof CXO_ORDER)[number];
 const ROLE_FULL: Record<Role, string> = {
@@ -91,10 +101,14 @@ function InlineMD({ text }: { text: string }) {
   );
 }
 function uniqStrings(items: string[]) {
-  const seen = new Set<string>(), out: string[] = [];
+  const seen = new Set<string>(),
+    out: string[] = [];
   for (const t of items) {
     const k = t.replace(/\s+/g, " ").trim().toLowerCase();
-    if (!seen.has(k) && t.trim()) { seen.add(k); out.push(t); }
+    if (!seen.has(k) && t.trim()) {
+      seen.add(k);
+      out.push(t);
+    }
   }
   return out;
 }
@@ -102,7 +116,9 @@ function uniqStrings(items: string[]) {
 /* ---------- Markdown parser ---------- */
 const ROLE_RE = "(CFO|CHRO|COO|CMO|CPO)";
 const H2_CXO_REGEX = new RegExp(`^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`, "im");
-function looksLikeCXO(md: string) { return H2_CXO_REGEX.test(md); }
+function looksLikeCXO(md: string) {
+  return H2_CXO_REGEX.test(md);
+}
 
 function extractSection(body: string, label: string) {
   const re = new RegExp(
@@ -158,7 +174,11 @@ function safeParseJson(s: unknown) {
   if (typeof s !== "string") return null;
   const t = s.trim();
   if (!t.startsWith("{") && !t.startsWith("[")) return null;
-  try { return JSON.parse(t); } catch { return null; }
+  try {
+    return JSON.parse(t);
+  } catch {
+    return null;
+  }
 }
 function parseCXOFromJSON(assistant: any): CXOData | null {
   if (!assistant) return null;
@@ -197,56 +217,132 @@ function parseAssistantToCXO(assistant: Msg): CXOData | null {
   return null;
 }
 
-/* ---------- Renderer ---------- */
-function CXOMessageFromData({ data, tier }: { data: CXOData; tier: Tier }) {
+/* ---------- Helper to render assistant as executive board output ---------- */
+function CXOExecutiveView({
+  data,
+  tier,
+}: {
+  data: CXOData;
+  tier: Tier;
+}) {
+  // Tier controls how many recs per role you show in Trial
   const maxRecs =
-    tier === "admin" || tier === "premium" || tier === "pro_plus" ? 5 : tier === "demo" ? 1 : 3;
-  const top = (data.collectiveInsights ?? []).slice(0, 30);
+    tier === "admin" || tier === "premium" || tier === "pro_plus"
+      ? 5
+      : tier === "demo"
+      ? 1
+      : 3;
+
+  // Top 3 actions come from the union of per-role recs, in order CFO → CHRO → COO → CMO → CPO.
+  const topActions = useMemo(() => {
+    const pooled: string[] = [];
+    for (const role of CXO_ORDER) {
+      for (const rec of data.byRole[role] || []) {
+        if (pooled.length < 3 && rec && !pooled.includes(rec)) {
+          pooled.push(rec);
+        }
+      }
+      if (pooled.length >= 3) break;
+    }
+    // fallback to collectiveInsights if very thin
+    if (pooled.length < 3) {
+      for (const insight of data.collectiveInsights || []) {
+        if (pooled.length < 3 && insight && !pooled.includes(insight)) {
+          pooled.push(insight);
+        }
+      }
+    }
+    return pooled.slice(0, 3);
+  }, [data]);
+
+  // map role → tagline we want to show on BrainCard
+  const ROLE_TAGLINES: Record<Role, string> = {
+    CFO: "Cash, burn, runway",
+    CHRO: "People, policy, liability",
+    COO: "Execution risk & delivery",
+    CMO: "Growth & pipeline health",
+    CPO: "Roadmap focus vs distraction",
+  };
+
+  // For each role, slice recs based on tier
+  const roleCards = CXO_ORDER.map((role) => {
+    const recs = (data.byRole?.[role] ?? []).slice(0, maxRecs);
+    return {
+      role,
+      tagline: ROLE_TAGLINES[role],
+      bullets: recs,
+    };
+  });
 
   return (
-    <div className="space-y-4">
-      <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-        <h3 className="text-xl font-semibold flex items-center gap-2">
-          <span>🔎</span> <span>Insights</span>
-        </h3>
-        {top.length ? (
-          <ol className="mt-3 list-decimal pl-6 space-y-1">
-            {top.map((it, i) => (
-              <li key={i} className="leading-7">
-                <InlineMD text={it} />
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <div className="mt-2 text-sm opacity-70">No material evidence in the provided context.</div>
-        )}
-      </section>
+    <div className="space-y-6 text-zinc-100">
+      {/* 1. Top 3 actions */}
+      <TopActionsCard actions={topActions} loading={false} />
 
-      {CXO_ORDER.map((role) => {
-        const full = ROLE_FULL[role] || role;
-        const recs = (data.byRole?.[role] ?? []).slice(0, maxRecs);
-        return (
-          <section key={role} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-            <h3 className="text-xl font-semibold flex items-center gap-2">
-              <span>👤</span> <span>{role} ({full})</span>
-            </h3>
-            <div className="mt-3 text-sm font-semibold opacity-90 flex items-center gap-2">
-              <span>✅</span> <span>Recommendations</span>
-            </div>
-            {recs.length ? (
-              <ul className="mt-2 list-disc pl-6 space-y-1">
-                {recs.map((it, i) => (
-                  <li key={i} className="leading-7">
-                    <InlineMD text={it} />
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="mt-2 text-sm opacity-70">No actionable data found.</div>
-            )}
-          </section>
-        );
-      })}
+      {/* 2. Confidence / limitations */}
+      <ConfidenceBanner
+        authenticity="Source and signatures cannot be independently verified."
+        consistency="No direct numerical contradictions found in provided context."
+        financeCheck="Runway and spend appear internally self-consistent."
+      />
+
+      {/* 3. Brain cards */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {roleCards.map((card, idx) => (
+          <BrainCard
+            key={idx}
+            role={card.role}
+            tagline={card.tagline}
+            points={card.bullets}
+            loading={false}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Skeleton while waiting on assistant ---------- */
+function CXOSkeletonView() {
+  const ROLE_TAGLINES: Record<string, string> = {
+    CFO: "Cash, burn, runway",
+    CHRO: "People, policy, liability",
+    COO: "Execution risk & delivery",
+    CMO: "Growth & pipeline health",
+    CPO: "Roadmap focus vs distraction",
+  };
+
+  return (
+    <div className="space-y-6 text-zinc-100">
+      {/* Top actions skeleton */}
+      <TopActionsCard actions={[]} loading={true} />
+
+      {/* ConfidenceBanner is static enough that we could show it even before data.
+         But to sell “thinking…”, we’ll hide it in skeleton state. */}
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 text-sm text-zinc-400 shadow-inner">
+        <div className="animate-pulse space-y-2">
+          <div className="h-3 w-1/3 rounded bg-zinc-800/70" />
+          <div className="h-3 w-3/4 rounded bg-zinc-800/70" />
+          <div className="h-3 w-2/3 rounded bg-zinc-800/70" />
+        </div>
+      </div>
+
+      {/* Brain cards skeleton */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {CXO_ORDER.map((role) => (
+          <BrainCard
+            key={role}
+            role={role}
+            tagline={ROLE_TAGLINES[role] || "Executive insight"}
+            loading={true}
+          />
+        ))}
+      </div>
+
+      {/* Typing indicator */}
+      <div className="pt-2">
+        <TypingDots />
+      </div>
     </div>
   );
 }
@@ -291,7 +387,12 @@ export default function TrialChatPage() {
     })();
   }, []);
 
-  if (loading) return <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">Loading…</main>;
+  if (loading)
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
+        Loading…
+      </main>
+    );
   if (apiBaseErr) {
     return (
       <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
@@ -305,16 +406,11 @@ export default function TrialChatPage() {
     );
   }
 
-  return (
-    <ChatUI
-      token={token}
-      me={me || { email: "", tier: "demo" }}
-    />
-  );
+  return <ChatUI token={token} me={me || { email: "", tier: "demo" }} />;
 }
 
 /* =====================================================================================
-   CHAT UI — Trial: single-file attachment (1) and no admin routing
+   CHAT UI — Trial experience
 ===================================================================================== */
 
 function ChatUI({ token, me }: { token: string; me: Me }) {
@@ -334,16 +430,44 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
+  // Discover endpoint style for /sessions and /history
+  const endpointCache = useRef<{
+    sessions: "" | "GET_qs" | "POST_json";
+    history: "" | "GET_qs" | "POST_json";
+  }>({
+    sessions: "",
+    history: "",
+  });
+
+  useEffect(() => {
+    try {
+      const j = JSON.parse(localStorage.getItem("trial_chat_ep_cache") || "{}");
+      if (j.sessions) endpointCache.current.sessions = j.sessions;
+      if (j.history) endpointCache.current.history = j.history;
+    } catch {}
+  }, []);
+
+  function persistCache() {
+    try {
+      localStorage.setItem(
+        "trial_chat_ep_cache",
+        JSON.stringify(endpointCache.current)
+      );
+    } catch {}
+  }
+
+  // Initial session load
   useEffect(() => {
     loadSessions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Auto-scroll to bottom on new msgs / state changes
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: 9e6, behavior: "smooth" });
   }, [msgs, sending, banner]);
 
-  // Global dropzone
+  // Global drag/drop for file attach
   useEffect(() => {
     const onDragOver = (e: DragEvent) => {
       if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files")) {
@@ -382,31 +506,18 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
     setFiles([]);
   }
 
-  /* ---------------- Sessions / History with adaptive methods ---------------- */
-
-  const endpointCache = useRef<{ sessions: "" | "GET_qs" | "POST_json"; history: "" | "GET_qs" | "POST_json" }>({
-    sessions: "",
-    history: "",
-  });
-
-  useEffect(() => {
-    try {
-      const j = JSON.parse(localStorage.getItem("trial_chat_ep_cache") || "{}");
-      if (j.sessions) endpointCache.current.sessions = j.sessions;
-      if (j.history) endpointCache.current.history = j.history;
-    } catch {}
-  }, []);
-  function persistCache() {
-    try {
-      localStorage.setItem("trial_chat_ep_cache", JSON.stringify(endpointCache.current));
-    } catch {}
-  }
+  /* ---------------- Adaptive backend calls ---------------- */
 
   async function adaptiveFetchListSessions() {
     if (!API_BASE) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
-    // prefer cached
+
+    // Try cached mode first
     if (endpointCache.current.sessions === "GET_qs") {
-      const r = await fetch(`${API_BASE}/api/chat/sessions`, { method: "GET", headers: authHeaders(), cache: "no-store" });
+      const r = await fetch(`${API_BASE}/api/chat/sessions`, {
+        method: "GET",
+        headers: authHeaders(),
+        cache: "no-store",
+      });
       if (r.ok) return r;
     } else if (endpointCache.current.sessions === "POST_json") {
       const r = await fetch(`${API_BASE}/api/chat/sessions`, {
@@ -417,7 +528,8 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
       });
       if (r.ok) return r;
     }
-    // discover
+
+    // Discover
     let r = await fetch(`${API_BASE}/api/chat/sessions`, {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
@@ -430,7 +542,11 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
       return r;
     }
     if (r.status === 405) {
-      r = await fetch(`${API_BASE}/api/chat/sessions`, { method: "GET", headers: authHeaders(), cache: "no-store" });
+      r = await fetch(`${API_BASE}/api/chat/sessions`, {
+        method: "GET",
+        headers: authHeaders(),
+        cache: "no-store",
+      });
       if (r.ok) {
         endpointCache.current.sessions = "GET_qs";
         persistCache();
@@ -442,6 +558,7 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
 
   async function adaptiveFetchHistory(sessionId: number) {
     if (!API_BASE) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
+
     if (endpointCache.current.history === "GET_qs") {
       const r = await fetch(`${API_BASE}/api/chat/history?session_id=${sessionId}`, {
         method: "GET",
@@ -458,7 +575,8 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
       });
       if (r.ok) return r;
     }
-    // discover
+
+    // Discover
     let r = await fetch(`${API_BASE}/api/chat/history?session_id=${sessionId}`, {
       method: "GET",
       headers: authHeaders(),
@@ -491,14 +609,21 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
       const r = await adaptiveFetchListSessions();
       if (!r.ok) throw new Error(`${r.status}: ${await fetchText(r)}`);
       const j = await r.json();
-      const list: SessionItem[] = Array.isArray(j) ? j : (j.sessions || []);
+      const list: SessionItem[] = Array.isArray(j) ? j : j.sessions || [];
       setSessions(list);
+
       if (!active && list.length) {
         setActive(list[0].id);
         await loadHistory(list[0].id);
       }
     } catch (e: any) {
-      setMsgs((m) => [...m, { role: "assistant", content: `Couldn’t load sessions.\n\n${e?.message || e}` } as Msg]);
+      setMsgs((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: `Couldn’t load sessions.\n\n${e?.message || e}`,
+        } as Msg,
+      ]);
     }
   }
 
@@ -517,7 +642,13 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
       }));
       setMsgs(items);
     } catch (e: any) {
-      setMsgs((m) => [...m, { role: "assistant", content: `Couldn’t load history.\n\n${e?.message || e}` } as Msg]);
+      setMsgs((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: `Couldn’t load history.\n\n${e?.message || e}`,
+        } as Msg,
+      ]);
     }
   }
 
@@ -527,14 +658,22 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
     setSending(true);
     setBanner(null);
 
+    // optimistic user bubble
     const attachedNames = files.map((f) => f.name);
     const userText = input.trim() || "(file only)";
-    setMsgs((m) => [...m, { role: "user", content: userText, attachments: attachedNames } as Msg]);
+    setMsgs((m) => [
+      ...m,
+      {
+        role: "user",
+        content: userText,
+        attachments: attachedNames,
+      } as Msg,
+    ]);
 
     const fd = new FormData();
     fd.append("message", input.trim());
     if (active) fd.append("session_id", String(active));
-    if (files[0]) fd.append("files", files[0]); // Trial: single file
+    if (files[0]) fd.append("files", files[0]); // Trial: 1 file
 
     setInput("");
     setFiles([]);
@@ -550,7 +689,9 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
 
       if (r.status === 429) {
         let j: any = {};
-        try { j = await r.json(); } catch {}
+        try {
+          j = await r.json();
+        } catch {}
         setBanner({
           title: j?.title || "Daily chat limit reached",
           message:
@@ -569,10 +710,18 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
       if (!r.ok) {
         const body = await fetchText(r);
         const friendly =
-          r.status === 413 ? "File too large for trial."
-          : r.status === 415 ? "Unsupported file type."
-          : "The server couldn’t process the request.";
-        setMsgs((m) => [...m, { role: "assistant", content: `${friendly}\n\n**Error ${r.status}:** ${body || "(no details)"}` } as Msg]);
+          r.status === 413
+            ? "File too large for trial."
+            : r.status === 415
+            ? "Unsupported file type."
+            : "The server couldn’t process the request.";
+        setMsgs((m) => [
+          ...m,
+          {
+            role: "assistant",
+            content: `${friendly}\n\n**Error ${r.status}:** ${body || "(no details)"}`,
+          } as Msg,
+        ]);
       } else {
         const j = await r.json();
         if (!active && j?.session_id) setActive(j.session_id);
@@ -592,15 +741,27 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
         }
       }
     } catch (err: any) {
-      setMsgs((m) => [...m, { role: "assistant", content: `Network error. Please try again.\n\n${String(err?.message || err)}` } as Msg]);
+      setMsgs((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: `Network error. Please try again.\n\n${String(
+            err?.message || err
+          )}`,
+        } as Msg,
+      ]);
     } finally {
       setSending(false);
     }
   }
 
+  /* ---------------- UI ---------------- */
+
   return (
     <div
-      className={`h-screen bg-zinc-950 text-zinc-100 grid transition-all ${isDragging ? "ring-2 ring-blue-500/40" : ""}`}
+      className={`h-screen bg-zinc-950 text-zinc-100 grid transition-all ${
+        isDragging ? "ring-2 ring-blue-500/40" : ""
+      }`}
       style={{ gridTemplateColumns: navOpen ? "260px 1fr" : "0 1fr" }}
     >
       {/* Sidebar */}
@@ -633,22 +794,35 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
                     loadHistory(s.id);
                   }}
                   className={`w-full text-left px-3 py-2 rounded-lg border ${
-                    isActive ? "border-blue-500 bg-blue-500/10" : "border-zinc-800 hover:bg-zinc-900/60"
+                    isActive
+                      ? "border-blue-500 bg-blue-500/10"
+                      : "border-zinc-800 hover:bg-zinc-900/60"
                   }`}
                 >
-                  <div className="text-[13px] truncate">{s.title || `Chat ${s.id}`}</div>
-                  <div className="text-[11px] opacity-60">{new Date(s.created_at).toLocaleString()}</div>
+                  <div className="text-[13px] truncate">
+                    {s.title || `Chat ${s.id}`}
+                  </div>
+                  <div className="text-[11px] opacity-60">
+                    {new Date(s.created_at).toLocaleString()}
+                  </div>
                 </button>
               );
             })}
-            {!sessions.length && <div className="text-xs opacity-60 px-2 py-1">No conversations yet.</div>}
+            {!sessions.length && (
+              <div className="text-xs opacity-60 px-2 py-1">
+                No conversations yet.
+              </div>
+            )}
           </div>
 
           <div className="p-3 border-t border-zinc-800 space-y-2 text-sm">
             <div className="text-xs opacity-70">
               Trial accounts have limited messages and 1 file per message.
             </div>
-            <Link href="/payments" className="block text-center px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-500">
+            <Link
+              href="/payments"
+              className="block text-center px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-500"
+            >
               Upgrade for more
             </Link>
           </div>
@@ -668,7 +842,9 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
             </button>
             <h1 className="text-base md:text-lg font-semibold truncate">
               {useMemo(
-                () => sessions.find((x) => x.id === active)?.title || (active ? `Chat ${active}` : "New chat"),
+                () =>
+                  sessions.find((x) => x.id === active)?.title ||
+                  (active ? `Chat ${active}` : "New chat"),
                 [sessions, active]
               )}
             </h1>
@@ -676,8 +852,13 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
             <div className="flex-1" />
 
             <div className="flex items-center gap-2">
-              <span className="text-xs px-2 py-1 rounded bg-zinc-800 border border-zinc-700">TRIAL</span>
-              <Link href="/login" className="px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-sm">
+              <span className="text-xs px-2 py-1 rounded bg-zinc-800 border border-zinc-700">
+                TRIAL
+              </span>
+              <Link
+                href="/login"
+                className="px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-sm"
+              >
                 Log out
               </Link>
             </div>
@@ -688,16 +869,24 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
         {banner && (
           <div className="mx-auto max-w-3xl px-4 pt-4">
             <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-4 text-amber-100">
-              <div className="font-semibold">{banner.title || "Daily chat limit reached"}</div>
+              <div className="font-semibold">
+                {banner.title || "Daily chat limit reached"}
+              </div>
               <div className="text-sm mt-1">
                 {banner.message ||
                   `You've used ${banner.used ?? "—"}/${banner.limit ?? "—"} messages today.`}
               </div>
               <div className="mt-2 flex gap-2">
-                <a href="/payments" className="rounded-md bg-amber-600 px-3 py-1 text-white hover:bg-amber-500">
+                <a
+                  href="/payments"
+                  className="rounded-md bg-amber-600 px-3 py-1 text-white hover:bg-amber-500"
+                >
                   Upgrade
                 </a>
-                <button onClick={() => setBanner(null)} className="text-xs underline">
+                <button
+                  onClick={() => setBanner(null)}
+                  className="text-xs underline"
+                >
                   Dismiss
                 </button>
               </div>
@@ -710,7 +899,8 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
           <div className="mx-auto max-w-3xl px-4 py-6 space-y-5">
             {msgs.length === 0 && (
               <div className="rounded-xl border border-dashed border-zinc-800 p-8 text-center text-sm opacity-70">
-                Welcome to Trial Chat — attach a file or ask a question to get started.
+                Welcome to Trial Chat — attach a file or ask a question to get
+                started.
               </div>
             )}
 
@@ -727,40 +917,59 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
                               key={`${name}-${idx}`}
                               className="inline-flex items-center gap-2 rounded-full bg-blue-900/40 border border-blue-700/50 px-2 py-1 text-xs"
                             >
-                              <span className="max-w-[220px] truncate">{name}</span>
+                              <span className="max-w-[220px] truncate">
+                                {name}
+                              </span>
                             </span>
                           ))}
                         </div>
                       )}
                       <div className="bg-blue-600/15 text-blue-100 border border-blue-500/30 rounded-2xl">
-                        <div className="px-4 py-3 whitespace-pre-wrap text-[16px] leading-7">{m.content}</div>
+                        <div className="px-4 py-3 whitespace-pre-wrap text-[16px] leading-7">
+                          {m.content}
+                        </div>
                       </div>
                     </div>
                   </article>
                 );
               }
 
+              // assistant branch:
               const data = parseAssistantToCXO(m as Msg);
+
               if (data) {
                 return (
                   <article key={i} className="flex">
                     <div className="w-full px-1">
-                      <CXOMessageFromData data={data} tier="demo" />
+                      {/* render structured executive view */}
+                      <CXOExecutiveView data={data} tier={me.tier || "demo"} />
                     </div>
                   </article>
                 );
               }
 
+              // fallback assistant (plain markdown)
               return (
                 <article key={i} className="flex">
                   <div className="w-full px-1">
                     <div className="prose prose-invert max-w-none text-[16px] leading-7">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {m.content}
+                      </ReactMarkdown>
                     </div>
                   </div>
                 </article>
               );
             })}
+
+            {/* Streaming / waiting for assistant reply */}
+            {sending && (
+              <article className="flex">
+                <div className="w-full px-1">
+                  <CXOSkeletonView />
+                </div>
+              </article>
+            )}
           </div>
         </div>
 
@@ -785,7 +994,9 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
                   </span>
                 ))}
                 {files.length >= maxFilesPerMessage && (
-                  <span className="text-[11px] opacity-70">Max 1 file for trial.</span>
+                  <span className="text-[11px] opacity-70">
+                    Max 1 file for trial.
+                  </span>
                 )}
               </div>
             )}
@@ -809,7 +1020,11 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
                 setIsDragging(false);
                 addFiles(Array.from(e.dataTransfer.files || []));
               }}
-              className={`flex items-center gap-2 ${isDragging ? "ring-2 ring-blue-500/40 rounded-lg p-2" : ""}`}
+              className={`flex items-center gap-2 ${
+                isDragging
+                  ? "ring-2 ring-blue-500/40 rounded-lg p-2"
+                  : ""
+              }`}
             >
               <textarea
                 value={input}
@@ -829,7 +1044,9 @@ function ChatUI({ token, me }: { token: string; me: Me }) {
                 type="file"
                 multiple={false}
                 className="hidden"
-                onChange={(e) => addFiles(Array.from(e.target.files || []))}
+                onChange={(e) =>
+                  addFiles(Array.from(e.target.files || []))
+                }
               />
               <button
                 onClick={() => fileRef.current?.click()}

@@ -5,7 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import LogoutButton from "../../components/LogoutButton";
+import LogoutButton from "@/components/LogoutButton";
+
+// NEW: overlay
+import AnalyzingOverlay from "@/components/AnalyzingOverlay";
 
 /* ---------------- Config ---------------- */
 const API_BASE =
@@ -13,7 +16,7 @@ const API_BASE =
   "https://caio-orchestrator.onrender.com";
 
 // bump when you redeploy to be sure caches are busted
-const BUILD_ID = "dash-v1.7-json";
+const BUILD_ID = "dash-v1.8-ui-overlays";
 
 /* ---------------- Types ---------------- */
 type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
@@ -174,7 +177,9 @@ export default function DashboardPage() {
     (async () => {
       try {
         await ensureBackendReady();
-      } catch {} // non-fatal; profile call will still run
+      } catch {
+        /* non-fatal; profile call will still run */
+      }
 
       try {
         const res = await withTimeout(
@@ -292,14 +297,20 @@ export default function DashboardPage() {
                 <>
                   <span className={`px-2.5 py-1 rounded-full text-xs tracking-wide border ${planClass}`}>{plan}</span>
                   {me?.is_admin && (
-                    <Link href="/admin" className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-sm shadow">
+                    <Link
+                      href="/admin"
+                      className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-sm shadow"
+                    >
                       Admin Mode
                     </Link>
                   )}
                   <LogoutButton />
                 </>
               ) : (
-                <Link href="/signup" className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white">
+                <Link
+                  href="/signup"
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white"
+                >
                   Go to Login
                 </Link>
               )}
@@ -310,7 +321,10 @@ export default function DashboardPage() {
           {token && (effectiveTier === "demo" || effectiveTier === "pro") && (
             <div className="mt-3 flex items-center gap-3">
               {effectiveTier === "demo" && !me?.is_paid && (
-                <Link href="/payments" className="inline-block text-blue-300 underline hover:text-blue-200">
+                <Link
+                  href="/payments"
+                  className="inline-block text-blue-300 underline hover:text-blue-200"
+                >
                   Upgrade to Pro
                 </Link>
               )}
@@ -355,7 +369,13 @@ export default function DashboardPage() {
 function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
+
+  // busy = backend in flight
   const [busy, setBusy] = useState(false);
+
+  // NEW: analyzing = controls cinematic overlay
+  const [analyzing, setAnalyzing] = useState(false);
+
   const [result, setResult] = useState<Result | null>(null);
   const [friendlyErr, setFriendlyErr] = useState<string | null>(null);
   const [limit, setLimit] = useState<LimitInfo>(null);
@@ -390,6 +410,7 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
 
   async function run() {
     setBusy(true);
+    setAnalyzing(true); // show overlay immediately
     resetErrors();
 
     try {
@@ -447,7 +468,12 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
       if (!res.ok) {
         const message =
           parsed?.message || parsed?.detail || raw || "Something went wrong while analyzing your request.";
-        setResult({ status: "error", title: "Analysis Unavailable", message, action: "Please try again later." });
+        setResult({
+          status: "error",
+          title: "Analysis Unavailable",
+          message,
+          action: "Please try again later.",
+        });
         return;
       }
 
@@ -470,116 +496,172 @@ function AnalyzeCard({ token, tier }: { token: string; tier: Tier }) {
       );
     } finally {
       setBusy(false);
+      setAnalyzing(false); // hide overlay once we got a final state
     }
   }
 
   return (
-    <section className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800 space-y-5">
-      <h2 className="text-xl font-semibold">Quick analyze</h2>
+    <>
+      {/* overlay at root of AnalyzeCard so it can go fullscreen */}
+      <AnalyzingOverlay active={analyzing} />
 
-      {/* Dropzone */}
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setDragActive(true);
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setDragActive(false);
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setDragActive(false);
-          const f = e.dataTransfer.files?.[0];
-          if (f) setFile(f);
-        }}
-        className={`rounded-xl border-2 border-dashed p-6 text-sm transition ${
-          dragActive ? "border-blue-400 bg-blue-400/10" : "border-zinc-700 hover:border-zinc-500 bg-zinc-950/40"
-        }`}
-      >
-        <div className="flex flex-col items-center gap-2 text-center">
-          <svg width="28" height="28" viewBox="0 0 24 24" className="opacity-80">
-            <path fill="currentColor" d="M19 12v7H5v-7H3v9h18v-9zM11 2h2v10h3l-4 4l-4-4h3z" />
-          </svg>
-        </div>
-        <div className="flex flex-col items-center gap-2 text-center">
-          <p className="opacity-85">Drag & drop a document here</p>
-          <p className="text-xs opacity-60">PDF, DOCX, TXT…</p>
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="mt-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
-          >
-            or browse files
-          </button>
-          <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => onFileChosen(e.target.files?.[0] ?? null)} />
-        </div>
-      </div>
+      <section className="bg-zinc-900/70 p-6 rounded-2xl shadow-xl border border-zinc-800 space-y-5">
+        <h2 className="text-xl font-semibold">Quick analyze</h2>
 
-      {/* Selected file */}
-      {file && (
-        <div className="flex items-center justify-between rounded-lg bg-zinc-950/60 border border-zinc-800 px-3 py-2 text-sm">
-          <div className="truncate">
-            <span className="opacity-90">{file.name}</span>
-            <span className="opacity-60"> • {(file.size / 1024).toFixed(1)} KB</span>
+        {/* Dropzone */}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setDragActive(true);
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setDragActive(false);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setDragActive(false);
+            const f = e.dataTransfer.files?.[0];
+            if (f) setFile(f);
+          }}
+          className={`rounded-xl border-2 border-dashed p-6 text-sm transition ${
+            dragActive
+              ? "border-blue-400 bg-blue-400/10"
+              : "border-zinc-700 hover:border-zinc-500 bg-zinc-950/40"
+          }`}
+        >
+          <div className="flex flex-col items-center gap-2 text-center">
+            <svg width="28" height="28" viewBox="0 0 24 24" className="opacity-80">
+              <path
+                fill="currentColor"
+                d="M19 12v7H5v-7H3v9h18v-9zM11 2h2v10h3l-4 4l-4-4h3z"
+              />
+            </svg>
           </div>
-          <button onClick={() => setFile(null)} className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-xs">
-            Remove
-          </button>
-        </div>
-      )}
-
-      {/* Prompt */}
-      <div className="space-y-2">
-        <label className="text-sm opacity-85">Brief / instructions</label>
-        <textarea
-          className="w-full h-28 p-3 rounded-xl text-zinc-100 placeholder-zinc-400 bg-zinc-950/60 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-          placeholder="Describe what you want CAIO to analyze…"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-      </div>
-
-      {/* Actions */}
-      <div className="flex items-center gap-3">
-        <button onClick={run} disabled={busy} className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-60 shadow">
-          {busy ? "Analyzing…" : "Analyze"}
-        </button>
-        <Link href="/payments" className="text-sm underline text-blue-300 hover:text-blue-200">
-          Need full features? Upgrade
-        </Link>
-      </div>
-
-      {/* Errors */}
-      {friendlyErr && (
-        <div className="mt-3 p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-200">
-          <h3 className="font-semibold mb-1">We hit a snag</h3>
-          <p className="text-sm">{friendlyErr}</p>
-        </div>
-      )}
-
-      {/* Results */}
-      {result && (
-        <div className="mt-3">
-          {result.status === "error" ? (
-            <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-200">
-              <h3 className="font-semibold">{result.title || "Analysis Unavailable"}</h3>
-              <p className="text-sm mt-1">{result.message}</p>
-            </div>
-          ) : (
-            <GroupedReport
-              title={result.title || "Analysis Result"}
-              md={result.summary || ""} // fallback rendering if combined missing
-              combined={result.combined}
-              tier={tier}
+          <div className="flex flex-col items-center gap-2 text-center">
+            <p className="opacity-85">Drag & drop a document here</p>
+            <p className="text-xs opacity-60">PDF, DOCX, TXT…</p>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="mt-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
+            >
+              or browse files
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => onFileChosen(e.target.files?.[0] ?? null)}
             />
-          )}
+          </div>
         </div>
-      )}
-    </section>
+
+        {/* Selected file */}
+        {file && (
+          <div className="flex items-center justify-between rounded-lg bg-zinc-950/60 border border-zinc-800 px-3 py-2 text-sm">
+            <div className="truncate">
+              <span className="opacity-90">{file.name}</span>
+              <span className="opacity-60"> • {(file.size / 1024).toFixed(1)} KB</span>
+            </div>
+            <button
+              onClick={() => setFile(null)}
+              className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-xs"
+            >
+              Remove
+            </button>
+          </div>
+        )}
+
+        {/* Prompt */}
+        <div className="space-y-2">
+          <label className="text-sm opacity-85">Brief / instructions</label>
+          <textarea
+            className="w-full h-28 p-3 rounded-xl text-zinc-100 placeholder-zinc-400 bg-zinc-950/60 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+            placeholder="Describe what you want CAIO to analyze…"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={run}
+            disabled={busy}
+            className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-60 shadow"
+          >
+            {busy ? "Analyzing…" : "Analyze"}
+          </button>
+          <Link
+            href="/payments"
+            className="text-sm underline text-blue-300 hover:text-blue-200"
+          >
+            Need full features? Upgrade
+          </Link>
+        </div>
+
+        {/* Errors */}
+        {friendlyErr && (
+          <div className="mt-3 p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-200">
+            <h3 className="font-semibold mb-1">We hit a snag</h3>
+            <p className="text-sm">{friendlyErr}</p>
+          </div>
+        )}
+
+        {/* Limit messages (rate limit etc.) */}
+        {limit && (
+          <div className="mt-3 p-4 rounded-lg border border-amber-400/30 bg-amber-500/10 text-amber-200 text-sm leading-relaxed">
+            <div className="font-semibold mb-1">
+              {limit.title || "Daily limit reached"}
+            </div>
+            <div className="opacity-90">{limit.message || "You’ve hit today’s usage limit."}</div>
+            <div className="mt-2 text-[11px] opacity-70">
+              Plan: {limit.plan ?? "—"} • Used: {limit.used ?? "—"} / {limit.limit ?? "—"} •
+              Reset: {formatUtcShort(limit.reset_at)}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-[13px]">
+              <Link
+                href="/payments"
+                className="rounded-md bg-blue-600 px-3 py-1 text-white hover:bg-blue-500"
+              >
+                Upgrade
+              </Link>
+              <Link
+                href="/trial/chat"
+                className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800 text-zinc-100"
+              >
+                Try Chat
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* Results */}
+        {result && (
+          <div className="mt-3">
+            {result.status === "error" ? (
+              <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-200">
+                <h3 className="font-semibold">
+                  {result.title || "Analysis Unavailable"}
+                </h3>
+                <p className="text-sm mt-1">{result.message}</p>
+              </div>
+            ) : (
+              <GroupedReport
+                title={result.title || "Analysis Result"}
+                md={result.summary || ""}
+                combined={result.combined}
+                tier={tier}
+              />
+            )}
+          </div>
+        )}
+      </section>
+    </>
   );
 }
 
@@ -604,17 +686,16 @@ function GroupedReport({
       combined?.aggregate?.collective ??
       combined?.aggregate?.collective_insights ??
       [];
-    // Show 2–3 items per your spec (min 2 when available)
     return list.slice(0, Math.max(2, Math.min(3, list.length)));
   }, [combined]);
 
-    const jsonRoleTop1 = useMemo(() => {
+  const jsonRoleTop1 = useMemo(() => {
     const map: Record<string, string | undefined> = {};
     const byRole = combined?.details_by_role || {};
     const agg = combined?.aggregate || {};
     const aggMapA = agg.cxo_recommendations || {};
     const aggMapB = agg.recommendations_by_role || {};
-    (["CFO","CHRO","COO","CMO","CPO"] as const).forEach((role) => {
+    (["CFO", "CHRO", "COO", "CMO", "CPO"] as const).forEach((role) => {
       let first =
         byRole?.[role]?.recommendations?.[0] ??
         aggMapA?.[role]?.[0] ??
@@ -623,7 +704,6 @@ function GroupedReport({
     });
     return map;
   }, [combined]);
-
 
   // ---------- Fallback to markdown if JSON absent ----------
   const fallbackBrains = useMemo(() => {
@@ -638,7 +718,6 @@ function GroupedReport({
     const blocks = fallbackBrains.map((b) => b.insights || "");
     const all: string[] = [];
     blocks.forEach((b) => extractListItems(b).forEach((x) => all.push(x)));
-    // Just take up to 3
     return all.slice(0, Math.max(2, Math.min(3, all.length)));
   }, [combined, fallbackBrains]);
 
@@ -659,7 +738,9 @@ function GroupedReport({
 
         {rec ? (
           <>
-            <div className="mt-1 text-sm font-semibold opacity-90">Recommendation</div>
+            <div className="mt-1 text-sm font-semibold opacity-90">
+              Recommendation
+            </div>
             <ul className="mt-2 list-disc pl-6 space-y-1">
               <li className="leading-7">
                 <InlineMD text={rec} />
@@ -667,20 +748,29 @@ function GroupedReport({
             </ul>
           </>
         ) : (
-          <div className="mt-2 text-sm opacity-70">No recommendations generated for this section.</div>
+          <div className="mt-2 text-sm opacity-70">
+            No recommendations generated for this section.
+          </div>
         )}
 
         {showUpsell && (
           <div className="mt-3 rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 text-[13px]">
             <div className="mb-1 font-semibold">Unlock more for {label}</div>
             <div className="opacity-90">
-              For more insights, upgrade to <b>Pro</b> — or if you want to chat, go for <b>Pro+</b> or <b>Premium</b>.
+              For more insights, upgrade to <b>Pro</b> — or if you want to chat,
+              go for <b>Pro+</b> or <b>Premium</b>.
             </div>
             <div className="mt-2 flex gap-2">
-              <a href="/payments" className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500">
+              <a
+                href="/payments"
+                className="rounded-md bg-indigo-600 px-3 py-1 text-white hover:bg-indigo-500"
+              >
                 Upgrade
               </a>
-              <a href="/trial/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">
+              <a
+                href="/trial/chat"
+                className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800"
+              >
                 Try Chat
               </a>
             </div>
@@ -699,24 +789,33 @@ function GroupedReport({
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
           <div className="text-lg font-medium">Collective Insights</div>
           <ol className="mt-2 list-decimal pl-6 space-y-1">
-            {(jsonCollective.length > 0 ? jsonCollective : fallbackCollective).map((it, i) => (
-              <li key={i} className="leading-7">
-                <InlineMD text={it} />
-              </li>
-            ))}
+            {(jsonCollective.length > 0 ? jsonCollective : fallbackCollective).map(
+              (it, i) => (
+                <li key={i} className="leading-7">
+                  <InlineMD text={it} />
+                </li>
+              )
+            )}
           </ol>
 
           {/* Upsell under collective */}
           <div className="mt-3 rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-[13px]">
             <div className="mb-1 font-semibold">Want deeper analysis?</div>
             <div className="opacity-90">
-              Upgrade for full CXO breakdowns and more recommendations across roles.
+              Upgrade for full CXO breakdowns and more recommendations across
+              roles.
             </div>
             <div className="mt-2 flex gap-2">
-              <a href="/payments" className="rounded-md bg-sky-600 px-3 py-1 text-white hover:bg-sky-500">
+              <a
+                href="/payments"
+                className="rounded-md bg-sky-600 px-3 py-1 text-white hover:bg-sky-500"
+              >
                 Upgrade
               </a>
-              <a href="/trial/chat" className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800">
+              <a
+                href="/trial/chat"
+                className="rounded-md border border-zinc-600 px-3 py-1 hover:bg-zinc-800"
+              >
                 Try Chat
               </a>
             </div>
@@ -738,7 +837,14 @@ function GroupedReport({
             rec = items[0];
           }
 
-          return <RoleCard key={label} label={label} rec={rec} showUpsell={true} />;
+          return (
+            <RoleCard
+              key={label}
+              label={label}
+              rec={rec}
+              showUpsell={true}
+            />
+          );
         })}
       </div>
     </div>

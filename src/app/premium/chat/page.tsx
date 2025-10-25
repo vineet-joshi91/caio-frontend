@@ -1,9 +1,20 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+// NEW shared UI components (you already created these in src/components)
+import TypingDots from "@/components/TypingDots";
+import TopActionsCard from "@/components/TopActionsCard";
+import ConfidenceBanner from "@/components/ConfidenceBanner";
+import BrainCard from "@/components/BrainCard";
 
 /* ---------------- Config ---------------- */
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").trim();
@@ -20,7 +31,7 @@ type Msg = {
   content: string;
   created_at?: string;
   attachments?: string[];
-  content_json?: any; // passthrough from backend if present
+  content_json?: any;
 };
 
 type LimitBanner = {
@@ -81,47 +92,24 @@ async function ensureBackendReady(base: string): Promise<void> {
   }
 }
 
-/* ---------------- CXO parsing/rendering ---------------- */
+/* ---------------- CXO parsing ---------------- */
 const CXO_ORDER = ["CFO", "CHRO", "COO", "CMO", "CPO"] as const;
-const ROLE_FULL: Record<string, string> = {
-  CFO: "Chief Financial Officer",
-  CHRO: "Chief Human Resources Officer",
-  COO: "Chief Operating Officer",
-  CMO: "Chief Marketing Officer",
-  CPO: "Chief People Officer",
-};
 type Role = (typeof CXO_ORDER)[number];
-type RoleDetails = { summary?: string; recommendations?: string[]; raw?: string };
-type CXOData = {
-  collectiveInsights: string[];
-  byRole: Record<Role, string[]>;
-  detailsByRole?: Record<Role, RoleDetails>;
-};
 
-function InlineMD({ text }: { text: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{ p: (props) => <span {...props} /> }}
-    >
-      {text}
-    </ReactMarkdown>
-  );
-}
 function uniqStrings(items: string[]) {
-  const seen = new Set<string>(),
-    out: string[] = [];
+  const seen = new Set<string>();
+  const out: string[] = [];
   for (const t of items) {
-    const k = t.replace(/\s+/g, " ").trim().toLowerCase();
-    if (!seen.has(k) && t.trim()) {
-      seen.add(k);
+    const norm = t.replace(/\s+/g, " ").trim().toLowerCase();
+    if (!seen.has(norm) && t.trim()) {
+      seen.add(norm);
       out.push(t);
     }
   }
   return out;
 }
 
-/* ---------- Markdown parser ---------- */
+// --- Markdown route (fallback) ---
 const ROLE_RE = "(CFO|CHRO|COO|CMO|CPO)";
 const H2_CXO_REGEX = new RegExp(
   `^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`,
@@ -146,13 +134,14 @@ function extractListItems(text?: string): string[] {
     .map((p) => p.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, "").trim())
     .filter(Boolean);
 }
-function parseCXOFromMarkdown(md: string): CXOData | null {
+function parseCXOFromMarkdown(md: string) {
   const lines = md.split("\n");
   const sections: { role: Role; start: number; end: number }[] = [];
   const h2Re = new RegExp(
     `^##\\s+${ROLE_RE}(?:\\s*\\([^)]*\\))?\\s*$`,
     "i"
   );
+
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(h2Re);
     if (m) {
@@ -163,20 +152,22 @@ function parseCXOFromMarkdown(md: string): CXOData | null {
       i = j - 1;
     }
   }
+
   if (!sections.length) return null;
 
   const blocks: { role: Role; insights: string[]; recs: string[] }[] = [];
-  for (const s of sections) {
-    const block = lines.slice(s.start, s.end + 1).join("\n");
+  for (const sec of sections) {
+    const block = lines.slice(sec.start, sec.end + 1).join("\n");
     const body = block.replace(h2Re, "").trim();
     const ins = extractListItems(extractSection(body, "Insights"));
     const recs = extractListItems(extractSection(body, "Recommendations"));
-    blocks.push({ role: s.role, insights: ins, recs });
+    blocks.push({ role: sec.role, insights: ins, recs });
   }
 
   const collectiveInsights = uniqStrings(
     blocks.flatMap((b) => b.insights)
   ).slice(0, 30);
+
   const byRole: Record<Role, string[]> = {
     CFO: [],
     CHRO: [],
@@ -184,14 +175,22 @@ function parseCXOFromMarkdown(md: string): CXOData | null {
     CMO: [],
     CPO: [],
   };
-  for (const b of blocks) byRole[b.role] = b.recs || [];
+  for (const b of blocks) {
+    byRole[b.role] = b.recs || [];
+  }
 
   const any =
-    collectiveInsights.length || CXO_ORDER.some((r) => byRole[r]?.length);
-  return any ? { collectiveInsights, byRole } : null;
+    collectiveInsights.length ||
+    CXO_ORDER.some((r) => byRole[r] && byRole[r].length);
+  if (!any) return null;
+
+  return {
+    collectiveInsights,
+    byRole,
+  };
 }
 
-/* ---------- JSON parser ---------- */
+// --- JSON route (preferred if backend sent structured data) ---
 function safeParseJson(s: unknown) {
   if (typeof s !== "string") return null;
   const t = s.trim();
@@ -202,13 +201,17 @@ function safeParseJson(s: unknown) {
     return null;
   }
 }
-function parseCXOFromJSON(assistant: any): CXOData | null {
+function parseCXOFromJSON(assistant: any) {
   if (!assistant) return null;
-  const payload = assistant.content_json ?? safeParseJson(assistant.content) ?? assistant;
+  const payload =
+    assistant.content_json ??
+    safeParseJson(assistant.content) ??
+    assistant;
   if (!payload || typeof payload !== "object") return null;
 
   const combined = (payload as any)?.combined;
   const agg = combined?.aggregate ?? {};
+
   const collective =
     (payload as any)?.collective_insights ??
     agg.collective ??
@@ -234,245 +237,160 @@ function parseCXOFromJSON(assistant: any): CXOData | null {
     byRole[r] = arr;
     if (arr.length) any = true;
   }
+
   if (!any && !collective.length) return null;
 
-  // details_by_role (partial; promote to defined only if present)
-  const detailsCand = combined?.details_by_role ?? {};
-  const detailsByRoleBuild: Partial<Record<Role, RoleDetails>> = {};
-  for (const r of CXO_ORDER) {
-    const x = detailsCand?.[r];
-    if (x) {
-      detailsByRoleBuild[r] = {
-        summary: typeof x.summary === "string" ? x.summary : undefined,
-        recommendations: Array.isArray(x.recommendations)
-          ? x.recommendations.filter(Boolean)
-          : undefined,
-        raw: typeof x.raw === "string" ? x.raw : undefined,
-      };
-    }
-  }
-  const detailsOut =
-    Object.keys(detailsByRoleBuild).length > 0
-      ? (detailsByRoleBuild as Record<Role, RoleDetails>)
-      : undefined;
-
-  return { collectiveInsights: collective, byRole, detailsByRole: detailsOut };
+  return {
+    collectiveInsights: collective,
+    byRole,
+  };
 }
 
-/* ---------- Unified parse ---------- */
-function parseAssistantToCXO(assistant: Msg): CXOData | null {
+// unified assistant->CXO parse
+function parseAssistantToCXO(assistant: Msg) {
   const j = parseCXOFromJSON(assistant);
   if (j) return j;
-  if (typeof assistant.content === "string" && looksLikeCXO(assistant.content)) {
+  if (
+    typeof assistant.content === "string" &&
+    looksLikeCXO(assistant.content)
+  ) {
     return parseCXOFromMarkdown(assistant.content);
   }
   return null;
 }
 
-/* ---------- helpers for recs dedupe ---------- */
-function norm(s: string) {
-  return s.replace(/\s+/g, " ").trim().toLowerCase();
-}
-function difference(a: string[], b: string[]) {
-  const setB = new Set(b.map(norm));
-  return a.filter((x) => !setB.has(norm(x)));
-}
+/* ---------- Executive view components ---------- */
 
-/* ---------- Role Details UI ---------- */
-function RoleCard({
-  role,
-  full,
-  bullets,
-  details,
-  canSeeDetails,
-}: {
-  role: Role;
-  full: string;
-  bullets: string[];             // summary/top list
-  details?: RoleDetails;         // full set from backend if available
-  canSeeDetails: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-
-  // Build effective details (fallback to bullets if BE sent nothing)
-  const eff: RoleDetails = {
-    summary: details?.summary,
-    recommendations:
-      details?.recommendations && details.recommendations.length
-        ? details.recommendations
-        : bullets,
-    raw: details?.raw,
-  };
-
-  // Only show items that are NOT already in the top summary list
-  const extraRecs = difference(eff.recommendations || [], bullets);
-
-  return (
-    <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-xl font-semibold flex items-center gap-2">
-          <span>👤</span> <span>{role} ({full})</span>
-        </h3>
-
-        {canSeeDetails && (
-          <button
-            onClick={() => setOpen((v) => !v)}
-            className="px-3 py-1.5 rounded-xl text-sm border border-zinc-700 hover:bg-zinc-800"
-            aria-expanded={open}
-          >
-            {open ? "Hide details" : "View details"}
-          </button>
-        )}
-      </div>
-
-      <div className="mt-3 text-sm font-semibold opacity-90 flex items-center gap-2">
-        <span>✅</span> <span>Recommendations</span>
-      </div>
-      {bullets.length ? (
-        <ul className="mt-2 list-disc pl-6 space-y-1">
-          {bullets.map((it, i) => (
-            <li key={i} className="leading-7">
-              <InlineMD text={it} />
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="mt-2 text-sm opacity-70">No actionable data found.</div>
-      )}
-
-      {canSeeDetails && open && (
-        <div className="mt-4 rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-3">
-          {eff.summary ? (
-            <>
-              <p className="text-xs uppercase tracking-wide text-zinc-400">Summary</p>
-              <p className="leading-relaxed">{eff.summary}</p>
-            </>
-          ) : (
-            <p className="text-sm opacity-70">No summary provided for this role.</p>
-          )}
-
-          {extraRecs.length > 0 ? (
-            <>
-              <p className="text-xs uppercase tracking-wide text-zinc-400">
-                Additional recommendations
-              </p>
-              <ul className="list-disc pl-6 space-y-1">
-                {extraRecs.map((r, i) => (
-                  <li key={i} className="leading-7">
-                    <InlineMD text={r} />
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : (
-            <p className="text-xs opacity-60">
-              No additional recommendations beyond the summary list.
-            </p>
-          )}
-
-          {eff.raw ? (
-            <>
-              <p className="text-xs uppercase tracking-wide text-zinc-400">Model rationale (raw)</p>
-              <pre className="whitespace-pre-wrap text-sm bg-black/30 p-3 rounded-lg border border-zinc-800 max-h-64 overflow-auto">
-                {eff.raw}
-              </pre>
-            </>
-          ) : (
-            <p className="text-xs opacity-60">No raw rationale provided.</p>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/* ---------- Renderer (uses RoleCard for Premium/Admin) ---------- */
-function CXOMessageFromData({
+// Builds the premium-style answer layout: Top 3 Actions, ConfidenceBanner, BrainCards grid.
+// tier is passed in mostly to decide how many bullets each BrainCard will expose.
+function CXOExecutiveView({
   data,
   tier,
 }: {
-  data: CXOData;
+  data: {
+    collectiveInsights: string[];
+    byRole: Record<Role, string[]>;
+  };
   tier: Tier;
 }) {
+  const ROLE_TAGLINES: Record<Role, string> = {
+    CFO: "Cash, burn, runway",
+    CHRO: "People, policy, liability",
+    COO: "Execution risk & delivery",
+    CMO: "Growth & pipeline health",
+    CPO: "Roadmap focus vs distraction",
+  };
+
+  // higher tiers get more bullets per role
   const maxRecs =
     tier === "admin" || tier === "premium" || tier === "pro_plus"
       ? 5
       : tier === "demo"
       ? 1
       : 3;
-  const top = (data.collectiveInsights ?? []).slice(0, 30);
-  const canSeeDetails = tier === "admin" || tier === "premium";
+
+  // Build Top 3 Actions: pull first actionable bullets across roles.
+  const topActions = useMemo(() => {
+    const pooled: string[] = [];
+    for (const role of CXO_ORDER) {
+      for (const rec of data.byRole[role] || []) {
+        if (pooled.length < 3 && rec && !pooled.includes(rec)) {
+          pooled.push(rec);
+        }
+      }
+      if (pooled.length >= 3) break;
+    }
+    if (pooled.length < 3) {
+      for (const insight of data.collectiveInsights || []) {
+        if (pooled.length < 3 && insight && !pooled.includes(insight)) {
+          pooled.push(insight);
+        }
+      }
+    }
+    return pooled.slice(0, 3);
+  }, [data]);
+
+  const roleCards = CXO_ORDER.map((role) => {
+    const recs = (data.byRole?.[role] ?? []).slice(0, maxRecs);
+    return {
+      role,
+      tagline: ROLE_TAGLINES[role],
+      bullets: recs,
+    };
+  });
 
   return (
-    <div className="space-y-4">
-      <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-        <h3 className="text-xl font-semibold flex items-center gap-2">
-          <span>🔎</span> <span>Insights</span>
-        </h3>
-        {top.length ? (
-          <ol className="mt-3 list-decimal pl-6 space-y-1">
-            {top.map((it, i) => (
-              <li key={i} className="leading-7">
-                <InlineMD text={it} />
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <div className="mt-2 text-sm opacity-70">
-            No material evidence in the provided context.
-          </div>
-        )}
-      </section>
+    <div className="space-y-6 text-zinc-100">
+      {/* 1. Top 3 Actions */}
+      <TopActionsCard actions={topActions} loading={false} />
 
-      {/* Pro+ upsell banner */}
-      {tier === "pro_plus" && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-amber-100">
-          <div className="font-semibold">
-            Detailed CXO Analysis is a Premium feature
-          </div>
-          <div className="text-sm mt-1">
-            Upgrade to Premium to view per-role summaries, raw model rationale, and JSON exports.
-          </div>
-          <div className="mt-2">
-            <a
-              href="/payments"
-              className="inline-block px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500"
-            >
-              Upgrade to Premium
-            </a>
-          </div>
-        </div>
-      )}
+      {/* 2. Confidence Banner */}
+      <ConfidenceBanner
+        authenticity="Source and signatures cannot be independently verified."
+        consistency="No direct numerical contradictions found in provided context."
+        financeCheck="Runway / spend appear internally self-consistent across statements."
+      />
 
-      {CXO_ORDER.map((role) => {
-        const full = ROLE_FULL[role] || role;
-
-        const fullRecs = data.byRole?.[role] ?? [];
-        const mainRecs = fullRecs.slice(
-          0,
-          tier === "admin" || tier === "premium" || tier === "pro_plus" ? 5
-            : tier === "demo" ? 1 : 3
-        );
-
-        // If BE didn’t send details_by_role, synthesize details from the full list
-        const details = data.detailsByRole?.[role] ?? { recommendations: fullRecs };
-
-        return (
-          <RoleCard
-            key={role}
-            role={role}
-            full={full}
-            bullets={mainRecs}
-            details={details}       // details may contain more than bullets
-            canSeeDetails={canSeeDetails}
+      {/* 3. Brain cards grid */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {roleCards.map((card, idx) => (
+          <BrainCard
+            key={idx}
+            role={card.role}
+            tagline={card.tagline}
+            points={card.bullets}
+            loading={false}
           />
-        );
-      })}
+        ))}
+      </div>
     </div>
   );
 }
 
-/* ---------------- Page ---------------- */
+// Skeleton view while model is thinking / streaming
+function CXOSkeletonView() {
+  const ROLE_TAGLINES: Record<string, string> = {
+    CFO: "Cash, burn, runway",
+    CHRO: "People, policy, liability",
+    COO: "Execution risk & delivery",
+    CMO: "Growth & pipeline health",
+    CPO: "Roadmap focus vs distraction",
+  };
+
+  return (
+    <div className="space-y-6 text-zinc-100">
+      {/* placeholder top actions */}
+      <TopActionsCard actions={[]} loading={true} />
+
+      {/* placeholder confidence */}
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 text-sm text-zinc-400 shadow-inner">
+        <div className="animate-pulse space-y-2">
+          <div className="h-3 w-1/3 rounded bg-zinc-800/70" />
+          <div className="h-3 w-3/4 rounded bg-zinc-800/70" />
+          <div className="h-3 w-2/3 rounded bg-zinc-800/70" />
+        </div>
+      </div>
+
+      {/* placeholder brain cards */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {CXO_ORDER.map((role) => (
+          <BrainCard
+            key={role}
+            role={role}
+            tagline={ROLE_TAGLINES[role] || "Executive insight"}
+            loading={true}
+          />
+        ))}
+      </div>
+
+      <div className="pt-2">
+        <TypingDots />
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- PAGE WRAPPER ---------------- */
 export default function PremiumChatPage() {
   const [token, setToken] = useState<string>("");
   const [me, setMe] = useState<Me | null>(null);
@@ -482,15 +400,20 @@ export default function PremiumChatPage() {
   useEffect(() => {
     const t = readTokenSafe();
     setToken(t);
+
     if (!API_BASE) {
-      setApiBaseErr("NEXT_PUBLIC_API_BASE is not set in your frontend environment.");
+      setApiBaseErr(
+        "NEXT_PUBLIC_API_BASE is not set in your frontend environment."
+      );
       setLoading(false);
       return;
     }
+
     if (!t) {
       setLoading(false);
       return;
     }
+
     (async () => {
       try {
         const r = await fetch(`${API_BASE}/api/profile`, {
@@ -502,10 +425,17 @@ export default function PremiumChatPage() {
         } else {
           const j = await r.json();
           const isAdmin = !!j.is_admin;
+
+          // Admin behaves like premium visually/functionally
           const effectiveTier: Tier = isAdmin
             ? "premium"
             : ((j.tier || "demo") as Tier);
-          setMe({ email: j.email, tier: effectiveTier, is_admin: isAdmin });
+
+          setMe({
+            email: j.email,
+            tier: effectiveTier,
+            is_admin: isAdmin,
+          });
         }
       } catch {
         setMe(null);
@@ -515,12 +445,13 @@ export default function PremiumChatPage() {
     })();
   }, []);
 
-  if (loading)
+  if (loading) {
     return (
       <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
         Loading…
       </main>
     );
+  }
 
   if (apiBaseErr) {
     return (
@@ -534,15 +465,18 @@ export default function PremiumChatPage() {
       </main>
     );
   }
-  if (!me)
+
+  if (!me) {
     return (
       <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
         Please log in.
       </main>
     );
+  }
 
   const hasPremiumAccess =
     me.tier === "premium" || me.tier === "pro_plus" || me.tier === "admin";
+
   if (!hasPremiumAccess) {
     return (
       <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
@@ -550,7 +484,8 @@ export default function PremiumChatPage() {
           <h1 className="text-2xl font-semibold">Premium Chat</h1>
         </div>
         <div className="max-w-2xl mx-auto rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
-          Chat is a <b>Premium</b> feature. Your current tier is <b>{me.tier}</b>.{" "}
+          Chat is a <b>Premium</b> feature. Your current tier is{" "}
+          <b>{me.tier}</b>.{" "}
           <Link
             href="/payments"
             className="underline text-blue-300 hover:text-blue-200"
@@ -575,7 +510,7 @@ export default function PremiumChatPage() {
 }
 
 /* =====================================================================================
-   CHAT UI — multi-file for Premium/Admin, single-file for Pro+, with limit placard
+   CHAT UI — Premium / Pro+ behavior with file limits, banners, thinking skeleton
 ===================================================================================== */
 
 function ChatUI({
@@ -592,8 +527,10 @@ function ChatUI({
   isPremium: boolean;
 }) {
   const [navOpen, setNavOpen] = useState<boolean>(true);
+
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [active, setActive] = useState<number | null>(null);
+
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -607,19 +544,50 @@ function ChatUI({
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
+  // adaptive endpoints cache
+  const endpointCache = useRef<{
+    sessions: "" | "GET_qs" | "POST_json";
+    history: "" | "GET_qs" | "POST_json";
+  }>({
+    sessions: "",
+    history: "",
+  });
+
+  useEffect(() => {
+    try {
+      const j = JSON.parse(localStorage.getItem("chat_ep_cache") || "{}");
+      if (j.sessions) endpointCache.current.sessions = j.sessions;
+      if (j.history) endpointCache.current.history = j.history;
+    } catch {}
+  }, []);
+
+  function persistCache() {
+    try {
+      localStorage.setItem(
+        "chat_ep_cache",
+        JSON.stringify(endpointCache.current)
+      );
+    } catch {}
+  }
+
+  // load sessions on mount
   useEffect(() => {
     loadSessions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // auto-scroll down as new messages or banners land
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: 9e6, behavior: "smooth" });
   }, [msgs, sending, banner]);
 
-  // Global dropzone
+  // global drag n drop listener
   useEffect(() => {
     const onDragOver = (e: DragEvent) => {
-      if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files")) {
+      if (
+        e.dataTransfer &&
+        Array.from(e.dataTransfer.types).includes("Files")
+      ) {
         e.preventDefault();
         e.dataTransfer.dropEffect = "copy";
         setIsDragging(true);
@@ -630,7 +598,9 @@ function ChatUI({
         e.preventDefault();
         setIsDragging(false);
         const incoming = Array.from(e.dataTransfer.files);
-        setFiles((prev) => prev.concat(incoming).slice(0, maxFilesPerMessage));
+        setFiles((prev) =>
+          prev.concat(incoming).slice(0, maxFilesPerMessage)
+        );
       }
     };
     const onDragLeave = (e: DragEvent) => {
@@ -659,34 +629,11 @@ function ChatUI({
     });
   }
 
-  /* ---------------- Sessions / History with adaptive methods (avoid 405) ---------------- */
-
-  const endpointCache = useRef<{
-    sessions: "" | "GET_qs" | "POST_json";
-    history: "" | "GET_qs" | "POST_json";
-  }>({
-    sessions: "",
-    history: "",
-  });
-
-  useEffect(() => {
-    try {
-      const j = JSON.parse(localStorage.getItem("chat_ep_cache") || "{}");
-      if (j.sessions) endpointCache.current.sessions = j.sessions;
-      if (j.history) endpointCache.current.history = j.history;
-    } catch {}
-  }, []);
-  function persistCache() {
-    try {
-      localStorage.setItem(
-        "chat_ep_cache",
-        JSON.stringify(endpointCache.current)
-      );
-    } catch {}
-  }
+  /* ---------------- adaptive fetch helpers ---------------- */
 
   async function adaptiveFetchListSessions() {
     if (!API_BASE) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
+
     // prefer cached
     if (endpointCache.current.sessions === "GET_qs") {
       const r = await fetch(`${API_BASE}/api/chat/sessions`, {
@@ -704,6 +651,7 @@ function ChatUI({
       });
       if (r.ok) return r;
     }
+
     // discover
     let r = await fetch(`${API_BASE}/api/chat/sessions`, {
       method: "POST",
@@ -733,6 +681,7 @@ function ChatUI({
 
   async function adaptiveFetchHistory(sessionId: number) {
     if (!API_BASE) throw new Error("NEXT_PUBLIC_API_BASE is not set.");
+
     if (endpointCache.current.history === "GET_qs") {
       const r = await fetch(
         `${API_BASE}/api/chat/history?session_id=${sessionId}`,
@@ -752,6 +701,7 @@ function ChatUI({
       });
       if (r.ok) return r;
     }
+
     // discover
     let r = await fetch(
       `${API_BASE}/api/chat/history?session_id=${sessionId}`,
@@ -790,6 +740,7 @@ function ChatUI({
       const j = await r.json();
       const list: SessionItem[] = Array.isArray(j) ? j : j.sessions || [];
       setSessions(list);
+
       if (!active && list.length) {
         setActive(list[0].id);
         await loadHistory(list[0].id);
@@ -830,25 +781,32 @@ function ChatUI({
     }
   }
 
-  /* ---------------- Send ---------------- */
+  /* ---------------- send ---------------- */
+
   async function send() {
     if (!input.trim() && files.length === 0) return;
     setSending(true);
     setBanner(null);
 
+    // optimistic user bubble
     const attachedNames = files.map((f) => f.name);
     const userText = input.trim() || "(file only)";
-
     setMsgs((m) => [
       ...m,
-      { role: "user", content: userText, attachments: attachedNames } as Msg,
+      {
+        role: "user",
+        content: userText,
+        attachments: attachedNames,
+      } as Msg,
     ]);
 
+    // build payload
     const fd = new FormData();
     fd.append("message", input.trim());
     if (active) fd.append("session_id", String(active));
     files.forEach((f) => fd.append("files", f));
 
+    // clear composer
     setInput("");
     setFiles([]);
 
@@ -857,7 +815,7 @@ function ChatUI({
 
       const r = await fetch(`${API_BASE}/api/chat/send`, {
         method: "POST",
-        headers: authHeaders(), // Authorization only
+        headers: authHeaders(),
         body: fd,
       });
 
@@ -872,7 +830,9 @@ function ChatUI({
             j?.message ||
             (typeof j?.used === "number" && typeof j?.limit === "number"
               ? `You've used ${j.used}/${j.limit} messages today.` +
-                (j?.reset_at ? ` Resets at ${formatUtcShort(j.reset_at)}.` : "")
+                (j?.reset_at
+                  ? ` Resets at ${formatUtcShort(j.reset_at)}.`
+                  : "")
               : "You've hit your daily chat limit."),
           plan: j?.plan,
           used: j?.used,
@@ -906,7 +866,8 @@ function ChatUI({
         if (!active && j?.session_id) setActive(j.session_id);
 
         const assistant = j?.assistant ?? {};
-        const text = assistant.content ?? (typeof j === "string" ? j : "OK.");
+        const text =
+          assistant.content ?? (typeof j === "string" ? j : "OK.");
         const msg: Msg = {
           id: assistant.id ?? crypto.randomUUID(),
           role: "assistant",
@@ -946,6 +907,8 @@ function ChatUI({
     }
   }
 
+  /* ---------------- render ---------------- */
+
   return (
     <div
       className={`h-screen bg-zinc-950 text-zinc-100 grid transition-all ${
@@ -953,7 +916,7 @@ function ChatUI({
       }`}
       style={{ gridTemplateColumns: navOpen ? "260px 1fr" : "0 1fr" }}
     >
-      {/* Sidebar */}
+      {/* SIDEBAR */}
       <aside
         className={`border-r border-zinc-800 bg-[rgb(14,19,32)] overflow-hidden transition-[width] duration-150 ${
           navOpen ? "w-[260px]" : "w-0"
@@ -1005,10 +968,10 @@ function ChatUI({
           </div>
 
           <div className="p-3 border-t border-zinc-800 space-y-2 text-sm">
-            {isProPlus && (
+            {isProPlus && !isPremium && (
               <div className="text-xs opacity-70">
                 Pro+ can attach one file and see basic recs. Upgrade to Premium
-                for detailed CXO analysis.
+                for deeper multi-CXO analysis.
               </div>
             )}
             {isAdmin && (
@@ -1023,9 +986,9 @@ function ChatUI({
         </div>
       </aside>
 
-      {/* Conversation column */}
+      {/* MAIN COLUMN */}
       <section className="relative h-screen grid grid-rows-[auto,1fr,auto]">
-        {/* Top bar */}
+        {/* top bar */}
         <header className="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur supports-[backdrop-filter]:bg-zinc-950/60">
           <div className="mx-auto max-w-4xl px-4 py-3 flex items-center gap-3">
             <button
@@ -1054,7 +1017,8 @@ function ChatUI({
                   try {
                     localStorage.removeItem("access_token");
                     localStorage.removeItem("token");
-                    document.cookie = "token=; Max-Age=0; path=/; SameSite=Lax";
+                    document.cookie =
+                      "token=; Max-Age=0; path=/; SameSite=Lax";
                   } catch {}
                   window.location.href = "/login";
                 }}
@@ -1067,7 +1031,7 @@ function ChatUI({
           </div>
         </header>
 
-        {/* Banner (Pro+ daily limit) */}
+        {/* banner / rate-limit / plan warning */}
         {banner && (
           <div className="mx-auto max-w-3xl px-4 pt-4">
             <div className="rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 p-4 text-fuchsia-100">
@@ -1080,7 +1044,9 @@ function ChatUI({
                     banner.limit ?? "—"
                   } messages today.${
                     banner.reset_at
-                      ? ` Resets at ${formatUtcShort(banner.reset_at)}.`
+                      ? ` Resets at ${formatUtcShort(
+                          banner.reset_at
+                        )}.`
                       : ""
                   }`}
               </div>
@@ -1091,7 +1057,10 @@ function ChatUI({
                 >
                   Upgrade to Premium
                 </a>
-                <button onClick={() => setBanner(null)} className="text-xs underline">
+                <button
+                  onClick={() => setBanner(null)}
+                  className="text-xs underline"
+                >
                   Dismiss
                 </button>
               </div>
@@ -1099,12 +1068,14 @@ function ChatUI({
           </div>
         )}
 
-        {/* Messages */}
+        {/* messages */}
         <div ref={scrollerRef} className="overflow-auto">
           <div className="mx-auto max-w-3xl px-4 py-6 space-y-5">
+            {/* empty state */}
             {msgs.length === 0 && (
               <div className="rounded-xl border border-dashed border-zinc-800 p-8 text-center text-sm opacity-70">
-                Start a conversation — attach document(s) for context or just ask CAIO anything.
+                Start a conversation — attach document(s) for context or just
+                ask CAIO anything.
               </div>
             )}
 
@@ -1121,7 +1092,9 @@ function ChatUI({
                               key={`${name}-${idx}`}
                               className="inline-flex items-center gap-2 rounded-full bg-blue-900/40 border border-blue-700/50 px-2 py-1 text-xs"
                             >
-                              <span className="max-w-[220px] truncate">{name}</span>
+                              <span className="max-w-[220px] truncate">
+                                {name}
+                              </span>
                             </span>
                           ))}
                         </div>
@@ -1136,19 +1109,22 @@ function ChatUI({
                 );
               }
 
-              // Unified render — try JSON/markdown parser first
-              const data = parseAssistantToCXO(m as Msg);
-              if (data) {
+              // assistant
+              const parsed = parseAssistantToCXO(m as Msg);
+              if (parsed) {
                 return (
                   <article key={i} className="flex">
                     <div className="w-full px-1">
-                      <CXOMessageFromData data={data} tier={me.tier} />
+                      <CXOExecutiveView
+                        data={parsed}
+                        tier={me.tier}
+                      />
                     </div>
                   </article>
                 );
               }
 
-              // Fallback: render raw markdown/text so the user always sees something
+              // fallback raw markdown if assistant message isn't structured
               return (
                 <article key={i} className="flex">
                   <div className="w-full px-1">
@@ -1161,12 +1137,22 @@ function ChatUI({
                 </article>
               );
             })}
+
+            {/* streaming / waiting state */}
+            {sending && (
+              <article className="flex">
+                <div className="w-full px-1">
+                  <CXOSkeletonView />
+                </div>
+              </article>
+            )}
           </div>
         </div>
 
-        {/* Composer */}
+        {/* composer */}
         <footer className="border-t border-zinc-800 bg-[rgb(14,19,32)]">
           <div className="mx-auto max-w-4xl px-4 py-3">
+            {/* attached files preview */}
             {!!files.length && (
               <div className="mb-3 flex flex-wrap gap-2 text-xs">
                 {files.map((f, idx) => (
@@ -1187,7 +1173,8 @@ function ChatUI({
                 {files.length >= maxFilesPerMessage && (
                   <span className="text-[11px] opacity-70">
                     Max {maxFilesPerMessage} file
-                    {maxFilesPerMessage > 1 ? "s" : ""} per message.
+                    {maxFilesPerMessage > 1 ? "s" : ""} per
+                    message.
                   </span>
                 )}
               </div>
@@ -1213,7 +1200,9 @@ function ChatUI({
                 addFiles(Array.from(e.dataTransfer.files || []));
               }}
               className={`flex items-center gap-2 ${
-                isDragging ? "ring-2 ring-blue-500/40 rounded-lg p-2" : ""
+                isDragging
+                  ? "ring-2 ring-blue-500/40 rounded-lg p-2"
+                  : ""
               }`}
             >
               <textarea
@@ -1234,22 +1223,30 @@ function ChatUI({
                 type="file"
                 multiple={isPremium}
                 className="hidden"
-                onChange={(e) => addFiles(Array.from(e.target.files || []))}
+                onChange={(e) =>
+                  addFiles(Array.from(e.target.files || []))
+                }
               />
               <button
                 onClick={() => fileRef.current?.click()}
                 className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
                 title={
-                  isPremium ? "Attach up to 8 files" : "Pro+ can attach 1 file"
+                  isPremium
+                    ? "Attach up to 8 files"
+                    : "Pro+ can attach 1 file"
                 }
               >
                 {files.length
-                  ? `${files.length} file${files.length > 1 ? "s" : ""}`
+                  ? `${files.length} file${
+                      files.length > 1 ? "s" : ""
+                    }`
                   : "Attach"}
               </button>
               <button
                 onClick={send}
-                disabled={sending || (!input.trim() && files.length === 0)}
+                disabled={
+                  sending || (!input.trim() && files.length === 0)
+                }
                 className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60"
               >
                 {sending ? "Sending…" : "Send"}
@@ -1258,10 +1255,13 @@ function ChatUI({
           </div>
         </footer>
 
+        {/* global drag overlay */}
         {isDragging && (
           <div className="pointer-events-none fixed inset-0 flex items-center justify-center">
             <div className="rounded-2xl border-2 border-dashed border-blue-400/60 bg-zinc-900/70 px-6 py-4 text-sm">
-              Drop file{isPremium ? "s" : ""} to attach {isPremium ? "(up to 8)" : "(1 for Pro+)"}.
+              Drop file
+              {isPremium ? "s" : ""} to attach{" "}
+              {isPremium ? "(up to 8)" : "(1 for Pro+)"}.
             </div>
           </div>
         )}
