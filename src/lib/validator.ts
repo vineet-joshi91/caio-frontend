@@ -1,0 +1,84 @@
+// frontend/src/lib/validator.ts
+// Simple wrapper around the CAIO BOS Validator FastAPI endpoints.
+
+export type UIBlock = {
+  executive_summary?: string;
+  summary?: string;
+  confidence?: number;
+  _meta?: {
+    model?: string;
+    engine?: string;
+    confidence?: number;
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+};
+
+// Minimal shape of what /run-ea returns.
+export type EAResponse = {
+  ui: UIBlock;
+  per_brain?: Record<string, unknown>;
+};
+
+export type PlanTier = "demo" | "pro" | "premium" | "enterprise";
+
+export interface RunEAOptions {
+  userId: number;
+  planTier: PlanTier;
+  model?: string;
+  timeoutSec?: number;   // seconds
+  numPredict?: number;   // tokens
+}
+
+// Use a dedicated env var so we can keep CAIO backend and validator separate.
+const VALIDATOR_API_BASE =
+  process.env.NEXT_PUBLIC_VALIDATOR_API_BASE?.trim().replace(/\/+$/, "") ||
+  "http://127.0.0.1:8000";
+
+/**
+ * Call the BOS Validator /run-ea endpoint with the new credit-gated payload.
+ * Client-side only (uses fetch).
+ */
+export async function runEA(packet: unknown, opts: RunEAOptions): Promise<EAResponse> {
+  if (!VALIDATOR_API_BASE) {
+    throw new Error("NEXT_PUBLIC_VALIDATOR_API_BASE is not configured");
+  }
+
+  const body = {
+    packet,
+    user_id: opts.userId,
+    plan_tier: opts.planTier,
+    model: opts.model ?? undefined,
+    timeout_sec: opts.timeoutSec ?? 300,
+    num_predict: opts.numPredict ?? 512,
+  };
+
+  const res = await fetch(`${VALIDATOR_API_BASE}/run-ea`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Validator HTTP ${res.status} ${res.statusText}: ${text.slice(0, 300)}`);
+  }
+
+  return (await res.json()) as EAResponse;
+}
+
+export interface WalletBalanceResponse {
+  user_id: number;
+  balance_credits: number;
+}
+
+export async function fetchWalletBalance(userId: number): Promise<WalletBalanceResponse> {
+  const res = await fetch(`${VALIDATOR_API_BASE}/wallet/balance?user_id=${userId}`);
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Validator HTTP ${res.status}`);
+  }
+
+  return (await res.json()) as WalletBalanceResponse;
+}
