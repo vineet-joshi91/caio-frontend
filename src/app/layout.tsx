@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "CAIO • Cognitive AI Officer for Founders",
   description:
-    "Rule-grounded, decision-first executive action plans from your business files. No prompt engineering. Pay-as-you-go credits.",
+    "Rule-grounded executive decision-making from your business files. No prompt engineering. Pay-as-you-go credits.",
 };
 
 export default function RootLayout({
