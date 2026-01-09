@@ -4,6 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+export const metadata = {
+  title: "Start Guided Trial • CAIO",
+  description:
+    "Create an account to start a guided trial. Upload a real business file and get a unified executive action plan. No prompt engineering. Pay-as-you-go credits.",
+};
+
 /* ---------- self-contained auth utils ---------- */
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE &&

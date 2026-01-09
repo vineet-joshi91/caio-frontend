@@ -1,7 +1,10 @@
 // app/api/logout/route.ts
 import { NextResponse } from "next/server";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE?.trim() || "https://caio-orchestrator.onrender.com";
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE &&
+    process.env.NEXT_PUBLIC_API_BASE.trim().replace(/\/+$/, "")) ||
+  "http://localhost:8000";
 
 export async function POST() {
   // best effort call to backend to clear its cookie (if any)

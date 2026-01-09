@@ -3,8 +3,9 @@
 import { useState } from "react";
 
 const API_BASE =
-  (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim().replace(/\/+$/,"")) ||
-  "https://caio-orchestrator.onrender.com";
+  (process.env.NEXT_PUBLIC_API_BASE &&
+    process.env.NEXT_PUBLIC_API_BASE.trim().replace(/\/+$/, "")) ||
+  "http://localhost:8000";
 
 // Where to send users AFTER logout.
 // Set this in Vercel to your marketing site, e.g. https://caioinsights.com

@@ -6,8 +6,9 @@ import Link from "next/link";
 /* ------------------------------ Config ------------------------------ */
 
 const API_BASE =
-  (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
-  "https://caio-backend.onrender.com";
+  (process.env.NEXT_PUBLIC_API_BASE &&
+    process.env.NEXT_PUBLIC_API_BASE.trim().replace(/\/+$/, "")) ||
+  "http://localhost:8000";
 
 type Currency = "USD" | "INR";
 

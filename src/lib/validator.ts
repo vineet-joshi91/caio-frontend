@@ -31,16 +31,17 @@ export interface RunEAOptions {
 }
 
 // Use a dedicated env var so we can keep CAIO backend and validator separate.
-const VALIDATOR_API_BASE =
-  process.env.NEXT_PUBLIC_VALIDATOR_API_BASE?.trim().replace(/\/+$/, "") ||
-  "http://127.0.0.1:8000";
+const BOS_BASE =
+  process.env.NEXT_PUBLIC_BOS_BASE?.trim().replace(/\/+$/, "") ||
+  "https://caioinsights.com";
+
 
 /**
  * Call the BOS Validator /run-ea endpoint with the new credit-gated payload.
  * Client-side only (uses fetch).
  */
 export async function runEA(packet: unknown, opts: RunEAOptions): Promise<EAResponse> {
-  if (!VALIDATOR_API_BASE) {
+  if (!BOS_BASE) {
     throw new Error("NEXT_PUBLIC_VALIDATOR_API_BASE is not configured");
   }
 
@@ -53,7 +54,7 @@ export async function runEA(packet: unknown, opts: RunEAOptions): Promise<EAResp
     num_predict: opts.numPredict ?? 512,
   };
 
-  const res = await fetch(`${VALIDATOR_API_BASE}/run-ea`, {
+  const res = await fetch(`${BOS_BASE}/run-ea`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -73,7 +74,7 @@ export interface WalletBalanceResponse {
 }
 
 export async function fetchWalletBalance(userId: number): Promise<WalletBalanceResponse> {
-  const res = await fetch(`${VALIDATOR_API_BASE}/wallet/balance?user_id=${userId}`);
+  const res = await fetch(`${BOS_BASE}/wallet/balance?user_id=${userId}`);
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");

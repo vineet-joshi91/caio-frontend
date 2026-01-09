@@ -10,6 +10,7 @@ export function BOSRunPanel({
   planTier,
   walletBalance,
   onWalletUpdate,
+  onRunComplete,
   defaultPacket,
   className = "",
 }: {
@@ -17,9 +18,11 @@ export function BOSRunPanel({
   planTier: PlanTier;
   walletBalance: number | null;
   onWalletUpdate?: (newBalance: number) => void;
+  onRunComplete?: (resp: EAResponse) => void;
   defaultPacket?: unknown;
   className?: string;
 }) {
+
   const [packetText, setPacketText] = useState<string>(() =>
     JSON.stringify(
       defaultPacket ?? {
@@ -74,8 +77,10 @@ export function BOSRunPanel({
         timeoutSec: 180,
         numPredict: 512,
       });
-
+      
       setOut(resp);
+      
+      onRunComplete?.(resp);
 
       // refresh wallet after success
       await refreshWalletBestEffort();

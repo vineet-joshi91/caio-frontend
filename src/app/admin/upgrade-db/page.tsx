@@ -2,8 +2,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 const API_BASE =
-  (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
-  "https://caio-orchestrator.onrender.com";
+  (process.env.NEXT_PUBLIC_API_BASE &&
+    process.env.NEXT_PUBLIC_API_BASE.trim().replace(/\/+$/, "")) ||
+  "http://localhost:8000";
+
 
 function getAuthToken(): string | null {
   try {

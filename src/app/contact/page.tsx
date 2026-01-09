@@ -1,8 +1,11 @@
 "use client";
 import { useState } from "react";
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim())
-  || "https://caio-backend.onrender.com";
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE &&
+    process.env.NEXT_PUBLIC_API_BASE.trim().replace(/\/+$/, "")) ||
+  "http://localhost:8000";
+    
 
 export default function ContactPage() {
   const [form, setForm] = useState({ name:"", organisation:"", email:"", need:"", message:"" });

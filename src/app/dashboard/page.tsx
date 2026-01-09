@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import LogoutButton from "@/components/LogoutButton";
 import { WalletPill } from "@/components/bos/WalletPill";
+import { WalletLedger } from "@/components/bos/WalletLedger";
 import { BOSRunPanel } from "@/components/bos/BOSRunPanel";
 import { BOSSummary } from "@/components/bos/BOSSummary";
 
@@ -16,18 +17,16 @@ import {
 
 /* ---------------- Config ---------------- */
 
-// Identity provider (TEMPORARY – Option A)
-const IDENTITY_API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.trim() ||
-  "https://caio-orchestrator.onrender.com";
+const BOS_BASE =
+  process.env.NEXT_PUBLIC_BOS_BASE?.trim().replace(/\/+$/, "") ||
+  "https://caioinsights.com";
 
-// BOS backend
-const BOS_API_BASE =
-  process.env.NEXT_PUBLIC_VALIDATOR_API_BASE?.trim() ||
-  "https://caioinsights.com/bos";
+const IDENTITY_BASE =
+  process.env.NEXT_PUBLIC_IDENTITY_BASE?.trim().replace(/\/+$/, "") ||
+  BOS_BASE;
 
-// bump when needed to bust caches
-const BUILD_ID = "caio-bos-dashboard-v1";
+const BUILD_ID = "caio-bos-dashboard-v2";
+
 
 /* ---------------- Types ---------------- */
 
@@ -82,10 +81,11 @@ export default function DashboardPage() {
 
     (async () => {
       try {
-        const res = await fetch(`${IDENTITY_API_BASE}/api/profile`, {
+        const res = await fetch(`${IDENTITY_BASE}/me`, {
           headers: { Authorization: `Bearer ${t}` },
           cache: "no-store",
         });
+
 
         if (res.status === 401) throw new Error("unauthorized");
         if (!res.ok) throw new Error(await res.text());
@@ -98,7 +98,7 @@ export default function DashboardPage() {
           is_admin: !!j.is_admin,
           tier: j.tier,
         });
-      } catch (e) {
+      } catch {
         try {
           localStorage.removeItem("access_token");
           localStorage.removeItem("token");
@@ -135,10 +135,10 @@ export default function DashboardPage() {
 
   /* ---------------- Derived ---------------- */
 
-  // BOS does NOT care about marketing tiers
+  // BOS logic: wallet > tier
   const planTier: PlanTier = me?.is_admin
     ? "enterprise"
-    : "demo"; // demo by default; wallet governs real usage
+    : "demo";
 
   if (redirecting.current) {
     return (
@@ -189,6 +189,14 @@ export default function DashboardPage() {
           onRefresh={() => me?.id && refreshWallet(me.id)}
         />
 
+        {/* ---------------- Wallet Ledger ---------------- */}
+        {me?.id && (
+          <WalletLedger
+            userId={me.id}
+            className="mt-2"
+          />
+        )}
+
         {/* ---------------- Run BOS ---------------- */}
         {me && (
           <BOSRunPanel
@@ -196,7 +204,8 @@ export default function DashboardPage() {
             planTier={planTier}
             walletBalance={walletBalance}
             onWalletUpdate={(b) => setWalletBalance(b)}
-            className="mt-2"
+            onRunComplete={(resp) => setLastRun(resp)}
+            className="mt-4"
           />
         )}
 
