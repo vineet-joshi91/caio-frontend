@@ -6,8 +6,9 @@ import Link from "next/link";
 
 /* ---------- self-contained auth utils ---------- */
 const API_BASE =
-  (process.env.NEXT_PUBLIC_API_BASE && process.env.NEXT_PUBLIC_API_BASE.trim()) ||
-  "https://caio-backend.onrender.com";
+  (process.env.NEXT_PUBLIC_API_BASE &&
+    process.env.NEXT_PUBLIC_API_BASE.trim().replace(/\/+$/, "")) ||
+  "https://caioinsights.com";
 
 type Tier = "admin" | "premium" | "pro_plus" | "pro" | "demo";
 
@@ -42,8 +43,8 @@ async function fetchProfileByToken(tok: string) {
   });
   return r;
 }
-function routeForTier(t: Tier): string {
-  if (t === "admin" || t === "premium" || t === "pro_plus") return "/premium/chat";
+function routeForTier(_t: Tier): string {
+  // BOS positioning: everything lands in the decision workflow, not a chat surface.
   return "/dashboard";
 }
 
@@ -124,7 +125,14 @@ export default function SignupPage() {
   return (
     <main className="min-h-screen w-full bg-black text-white flex items-start justify-center pt-20 px-4">
       <div className="max-w-md w-full rounded-2xl bg-neutral-900/80 p-6 shadow-xl">
-        <h1 className="text-2xl font-semibold mb-4">Create your account</h1>
+        <h1 className="text-2xl font-semibold mb-2">Start Guided Trial</h1>
+        <p className="text-sm text-neutral-300 mb-4 leading-relaxed">
+          Upload a real business file and get a <span className="text-white font-semibold">unified executive action plan</span> —
+          rule-grounded, decision-first, and designed to prevent costly mistakes.
+          <br />
+          <span className="text-white font-semibold">No prompt engineering.</span> Pay-as-you-go credits when you need more runs.
+        </p>
+
 
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           <div>
@@ -160,9 +168,14 @@ export default function SignupPage() {
             disabled={busy}
             className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-60 transition"
           >
-            {busy ? "Creating account…" : "Sign up"}
+            {busy ? "Starting Guided Trial…" : "Continue to Guided Trial"}
           </button>
         </form>
+        <ul className="mt-4 text-sm text-neutral-300 space-y-1">
+          <li>• One unified decision-ready output (not chatbot replies)</li>
+          <li>• Prioritized risks, blind spots, and next steps</li>
+          <li>• Clear actions before you advertise, hire, or burn cash</li>
+        </ul>
 
         <p className="mt-4 text-sm text-neutral-400">
           Already have an account?{" "}
