@@ -135,10 +135,11 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* Helpful debug hint */}
-        <p className="text-xs opacity-60">
-          API: <code>{API_BASE}</code> • Post-login: <code>{POST_LOGIN_PATH}</code>
-        </p>
+        {process.env.NODE_ENV !== "production" && (
+          <p className="text-xs opacity-60">
+            API: <code>{API_BASE}</code> • Post-login: <code>{POST_LOGIN_PATH}</code>
+          </p>
+        )}
       </div>
     </main>
   );
