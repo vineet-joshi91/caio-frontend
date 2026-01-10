@@ -134,12 +134,6 @@ export default function LoginPage() {
             {busy ? "Signing in…" : "Sign in"}
           </button>
         </form>
-
-        {process.env.NODE_ENV !== "production" && (
-          <p className="text-xs opacity-60">
-            API: <code>{API_BASE}</code> • Post-login: <code>{POST_LOGIN_PATH}</code>
-          </p>
-        )}
       </div>
     </main>
   );
