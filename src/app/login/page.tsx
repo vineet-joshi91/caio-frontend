@@ -5,7 +5,7 @@ import { useState } from "react";
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE &&
     process.env.NEXT_PUBLIC_API_BASE.trim().replace(/\/+$/, "")) ||
-  "http://localhost:8000";
+  "https://caioinsights.com";
 
 
 // Where non-admin users land after login (set in Vercel if you want something else)
@@ -103,6 +103,14 @@ export default function LoginPage() {
               placeholder="you@example.com"
               autoComplete="email"
             />
+          </div>
+          <div className="flex items-center justify-end">
+            <a
+              href="/forgot-password"
+              className="text-sm text-blue-400 hover:text-blue-300 underline"
+            >
+              Forgot password?
+            </a>
           </div>
 
           <div className="space-y-1">

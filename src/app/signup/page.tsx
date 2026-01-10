@@ -183,6 +183,15 @@ export default function SignupPage() {
             Log in
           </Link>
         </p>
+        <p className="mt-2 text-sm text-neutral-400">
+          Forgot your password?{" "}
+          <Link
+            href="/forgot-password"
+            className="underline text-blue-400 hover:text-blue-300"
+          >
+            Reset it
+          </Link>
+        </p>
       </div>
     </main>
   );
