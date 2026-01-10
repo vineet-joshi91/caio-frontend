@@ -1,5 +1,7 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -26,7 +28,6 @@ const IDENTITY_BASE =
   BOS_BASE;
 
 const BUILD_ID = "caio-bos-dashboard-v2";
-
 
 /* ---------------- Types ---------------- */
 
@@ -69,7 +70,7 @@ export default function DashboardPage() {
   /* ---------------- Boot ---------------- */
 
   useEffect(() => {
-    console.log("CAIO BOS Dashboard build:", BUILD_ID);
+    console.log("CAIO Dashboard build:", BUILD_ID);
 
     const t = readTokenSafe();
     setToken(t);
@@ -85,7 +86,6 @@ export default function DashboardPage() {
           headers: { Authorization: `Bearer ${t}` },
           cache: "no-store",
         });
-
 
         if (res.status === 401) throw new Error("unauthorized");
         if (!res.ok) throw new Error(await res.text());
@@ -103,6 +103,7 @@ export default function DashboardPage() {
           localStorage.removeItem("access_token");
           localStorage.removeItem("token");
         } catch {}
+
         if (!redirecting.current) {
           redirecting.current = true;
           router.replace("/login");
@@ -121,9 +122,7 @@ export default function DashboardPage() {
       const bal = await fetchWalletBalance(userId);
       setWalletBalance(bal.balance_credits);
     } catch (e: any) {
-      setWalletErr(
-        e?.message || "Failed to fetch wallet balance"
-      );
+      setWalletErr(e?.message || "Failed to fetch wallet balance");
     }
   }
 
@@ -135,10 +134,10 @@ export default function DashboardPage() {
 
   /* ---------------- Derived ---------------- */
 
-  // BOS logic: wallet > tier
-  const planTier: PlanTier = me?.is_admin
-    ? "enterprise"
-    : "demo";
+  // BOS logic: wallet > tier; keep tier simple; backend enforces credits anyway
+  const planTier: PlanTier = me?.is_admin ? "enterprise" : "demo";
+
+  /* ---------------- Redirect UI ---------------- */
 
   if (redirecting.current) {
     return (
@@ -152,21 +151,62 @@ export default function DashboardPage() {
     );
   }
 
+  /* ---------------- Not logged in gate ---------------- */
+
+  if (!loading && !me) {
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
+        <div className="max-w-3xl mx-auto">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl">
+            <h1 className="text-2xl font-semibold">Decision Review</h1>
+            <p className="mt-2 text-sm opacity-80">
+              Your session has expired or you’re not logged in.
+            </p>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => router.push("/login")}
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm text-white shadow hover:bg-blue-500"
+              >
+                Log in
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push("/signup?plan=demo")}
+                className="rounded-xl border border-zinc-700 bg-zinc-950/40 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-900"
+              >
+                Start Guided Trial
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  /* ---------------- Main UI ---------------- */
+
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
       <div className="max-w-5xl mx-auto space-y-6">
-
         {/* ---------------- Header ---------------- */}
         <header className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold">
-                CAIO Dashboard
-              </h1>
+              <h1 className="text-2xl font-semibold">Decision Review</h1>
               <p className="mt-1 text-sm opacity-80">
-                {me
-                  ? <>Logged in as <b>{me.email}</b></>
-                  : <>Not logged in</>}
+                {me ? (
+                  <>
+                    Signed in as <b>{me.email}</b>
+                  </>
+                ) : (
+                  <>Session required</>
+                )}
+              </p>
+              <p className="mt-2 text-sm opacity-70">
+                Upload a real business file and get a unified executive action plan — rule-grounded, not chatbot replies.
               </p>
             </div>
 
@@ -190,11 +230,13 @@ export default function DashboardPage() {
         />
 
         {/* ---------------- Wallet Ledger ---------------- */}
-        {me?.id && (
-          <WalletLedger
-            userId={me.id}
-            className="mt-2"
-          />
+        {me?.id && <WalletLedger userId={me.id} className="mt-2" />}
+
+        {/* ---------------- Credits warning ---------------- */}
+        {me && walletBalance !== null && walletBalance <= 0 && (
+          <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+            You’re out of credits. Top up to run more decision reviews.
+          </div>
         )}
 
         {/* ---------------- Run BOS ---------------- */}
@@ -210,13 +252,9 @@ export default function DashboardPage() {
         )}
 
         {/* ---------------- Output ---------------- */}
-        {lastRun?.ui && (
-          <BOSSummary
-            ui={lastRun.ui}
-            title="BOS Executive Summary"
-          />
-        )}
+        {lastRun?.ui && <BOSSummary ui={lastRun.ui} title="Executive Action Plan" />}
 
+        {/* ---------------- Loading overlay ---------------- */}
         {loading && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6">
             Loading…
