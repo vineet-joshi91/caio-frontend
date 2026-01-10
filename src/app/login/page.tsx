@@ -104,14 +104,7 @@ export default function LoginPage() {
               autoComplete="email"
             />
           </div>
-          <div className="flex items-center justify-end">
-            <a
-              href="/forgot-password"
-              className="text-sm text-blue-400 hover:text-blue-300 underline"
-            >
-              Forgot password?
-            </a>
-          </div>
+          
 
           <div className="space-y-1">
             <label className="text-sm opacity-80">Password</label>
@@ -125,7 +118,14 @@ export default function LoginPage() {
               autoComplete="current-password"
             />
           </div>
-
+          <div className="flex items-center justify-end">
+            <a
+              href="/forgot-password"
+              className="text-sm text-blue-400 hover:text-blue-300 underline"
+            >
+              Forgot password?
+            </a>
+          </div>
           <button
             type="submit"
             disabled={busy}
