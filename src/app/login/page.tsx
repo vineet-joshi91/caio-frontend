@@ -27,7 +27,7 @@ export default function LoginPage() {
 
     try {
       // 1) Login
-      const r = await fetch(`${API_BASE}/api/login`, {
+      const r = await fetch(`${API_BASE}/bos-auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include", // allow backend to set cookie
@@ -58,7 +58,7 @@ export default function LoginPage() {
       ].join("; ");
 
       // 3) Fetch profile to decide where to go
-      const pr = await fetch(`${API_BASE}/api/profile`, {
+      const pr = await fetch(`${API_BASE}/bos-auth/me`, {
         headers: { Authorization: `Bearer ${token}` },
         credentials: "include",
         cache: "no-store",
