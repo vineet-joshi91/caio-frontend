@@ -82,7 +82,7 @@ export default function DashboardPage() {
 
     (async () => {
       try {
-        const res = await fetch(`${IDENTITY_BASE}/me`, {
+        const res = await fetch(`${IDENTITY_BASE}/bos-auth/me`, {
           headers: { Authorization: `Bearer ${t}` },
           cache: "no-store",
         });
