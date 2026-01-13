@@ -72,7 +72,7 @@ export default function LoginPage() {
       const isAdmin = !!(profile?.is_admin || profile?.tier === "admin" || profile?.tier === "premium");
 
       // 4) Route based on role
-      window.location.assign(isAdmin ? "/admin" : POST_LOGIN_PATH);
+      window.location.assign("/dashboard");
     } catch (e: any) {
       setErr(e?.message || "Login failed");
     } finally {

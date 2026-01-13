@@ -212,12 +212,24 @@ export default function DashboardPage() {
 
             <div className="flex items-center gap-3">
               {me?.is_admin && (
-                <span className="rounded-full border border-purple-400/40 bg-purple-500/15 px-3 py-1 text-xs text-purple-200">
-                  Admin
-                </span>
+                <>
+                  <span className="rounded-full border border-purple-400/40 bg-purple-500/15 px-3 py-1 text-xs text-purple-200">
+                    Admin
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/admin")}
+                    className="rounded-xl border border-zinc-700 bg-zinc-950/40 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900"
+                  >
+                    Admin Mode
+                  </button>
+                </>
               )}
+
               {token && <LogoutButton />}
             </div>
+
           </div>
         </header>
 
