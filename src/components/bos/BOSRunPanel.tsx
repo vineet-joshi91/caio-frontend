@@ -101,9 +101,9 @@ export function BOSRunPanel({
     <section className={`rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5 shadow-xl ${className}`}>
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Run BOS</h2>
+          <h2 className="text-lg font-semibold">Run Decision Review</h2>
           <div className="text-xs opacity-70">
-            Uses BOS Validator API · Tier: <span className="font-semibold">{planTier}</span>
+            Uses CAIO decision engine
           </div>
         </div>
 
