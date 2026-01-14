@@ -36,10 +36,18 @@ export function WalletLedger({
       setLoading(true);
       setErr(null);
 
+      const tok =
+        (typeof window !== "undefined" &&
+          (localStorage.getItem("access_token") || localStorage.getItem("token"))) ||
+        "";
+
       const res = await fetch(
         `${BOS_API_BASE}/wallet/transactions?user_id=${userId}&limit=${pageSize}&offset=${nextOffset}`,
-        { cache: "no-store" }
+        {
+          headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+        }
       );
+
 
       if (!res.ok) {
         throw new Error(await res.text());

@@ -74,7 +74,15 @@ export interface WalletBalanceResponse {
 }
 
 export async function fetchWalletBalance(userId: number): Promise<WalletBalanceResponse> {
-  const res = await fetch(`${BOS_BASE}/wallet/balance?user_id=${userId}`);
+  const tok =
+    (typeof window !== "undefined" &&
+      (localStorage.getItem("access_token") || localStorage.getItem("token"))) ||
+    "";
+
+  const res = await fetch(`${BOS_BASE}/wallet/balance?user_id=${userId}`, {
+    headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+  });
+
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
