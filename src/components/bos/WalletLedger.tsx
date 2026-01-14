@@ -13,8 +13,10 @@ type CreditTransaction = {
 };
 
 const BOS_API_BASE =
-  process.env.NEXT_PUBLIC_VALIDATOR_API_BASE?.trim() ||
-  "https://caioinsights.com/bos";
+  (process.env.NEXT_PUBLIC_BOS_BASE &&
+    process.env.NEXT_PUBLIC_BOS_BASE.trim().replace(/\/+$/, "")) ||
+  "https://caioinsights.com";
+
 
 export function WalletLedger({
   userId,
