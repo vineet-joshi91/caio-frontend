@@ -239,6 +239,39 @@ export default function DashboardPage() {
           onRefresh={() => me?.id && refreshWallet(me.id)}
         />
 
+        {/* Credits actions */}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => me?.id && refreshWallet(me.id)}
+            className="rounded-xl border border-zinc-700 bg-zinc-950/40 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-900"
+          >
+            Refresh credits
+          </button>
+
+          <button
+            type="button"
+            onClick={() => router.push("/payments")}
+            className="rounded-xl bg-blue-600 px-3 py-2 text-sm text-white shadow hover:bg-blue-500"
+          >
+            Top up credits
+          </button>
+
+          <span className="text-xs opacity-60">
+            Credits control usage (pay-as-you-go). No subscriptions.
+          </span>
+        </div>
+
+        {/* If wallet API errors, show a helpful message instead of raw JSON */}
+        {walletErr && (
+          <div className="rounded-2xl border border-red-400/30 bg-red-500/10 p-4 text-sm text-red-100">
+            <div className="font-semibold mb-1">Credits unavailable</div>
+            <div className="opacity-90">
+              We couldn’t load your credit balance right now. Try refresh. If it persists, log out and log in again.
+            </div>
+          </div>
+        )}
+
         {/* ---------------- Wallet Ledger ---------------- */}
         {me?.id && <WalletLedger userId={me.id} className="mt-2" />}
 

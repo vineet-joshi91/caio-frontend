@@ -117,13 +117,24 @@ export function BOSRunPanel({
         </button>
       </div>
 
-      <textarea
-        value={packetText}
-        onChange={(e) => setPacketText(e.currentTarget.value)}
-        rows={12}
-        spellCheck={false}
-        className="w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 font-mono text-sm text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-      />
+      <details className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950/30 p-3">
+        <summary className="cursor-pointer text-sm font-semibold opacity-90">
+          Advanced (optional): Edit input packet JSON
+        </summary>
+
+        <div className="mt-3 text-xs opacity-70">
+          Most users don’t need this. The default packet works for testing.
+        </div>
+
+        <textarea
+          value={packetText}
+          onChange={(e) => setPacketText(e.currentTarget.value)}
+          rows={12}
+          spellCheck={false}
+          className="mt-3 w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 font-mono text-sm text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+        />
+      </details>
+
 
       {err && (
         <div className="mt-3 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">
