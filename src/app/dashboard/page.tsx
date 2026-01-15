@@ -8,6 +8,7 @@ import { WalletPill } from "@/components/bos/WalletPill";
 import { WalletLedger } from "@/components/bos/WalletLedger";
 import { BOSRunPanel } from "@/components/bos/BOSRunPanel";
 import { BOSSummary } from "@/components/bos/BOSSummary";
+import { BOSUploadPanel } from "@/components/bos/BOSUploadPanel";
 
 import {
   fetchWalletBalance,
@@ -281,6 +282,15 @@ export default function DashboardPage() {
             You’re out of credits. Top up to run more decision reviews.
           </div>
         )}
+
+        {me && (
+          <BOSUploadPanel
+            planTier={planTier}
+            onRunComplete={(resp) => setLastRun(resp)}
+            className="mt-4"
+          />
+        )}
+
 
         {/* ---------------- Run BOS ---------------- */}
         {me && (
