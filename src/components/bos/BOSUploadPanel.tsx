@@ -112,6 +112,15 @@ export function BOSUploadPanel({
           className="rounded-xl bg-blue-600 px-4 py-2 text-sm text-white shadow hover:bg-blue-500 disabled:opacity-60"
         >
           {running ? "Analyzing…" : "Analyze file"}
+          {running && (
+            <div className="mt-3 rounded-xl border border-blue-400/20 bg-blue-500/10 p-3 text-sm text-blue-100">
+                <div className="font-semibold">Analysis in progress</div>
+                <div className="opacity-90">
+                Please be patient — complex files can take 30–90 seconds.
+                </div>
+            </div>
+            )}
+
         </button>
       </div>
 
