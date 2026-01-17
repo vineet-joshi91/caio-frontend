@@ -55,8 +55,8 @@ export function BOSUploadPanel({
 
       // Optional tuning params (backend supports query params)
       const url = new URL(`${BOS_BASE}/upload-and-ea`);
-      url.searchParams.set("timeout_sec", "300");
-      url.searchParams.set("num_predict", "512");
+      url.searchParams.set("timeout_sec", "240");
+      url.searchParams.set("num_predict", "256");
       // planTier is used by frontend; backend may ignore it here (fine).
 
       const res = await fetch(url.toString(), {
