@@ -64,7 +64,8 @@ export default function DashboardPage() {
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [walletErr, setWalletErr] = useState<string | null>(null);
 
-  const [lastRun, setLastRun] = useState<EAResponse | null>(null);
+  const [executionPlan, setExecutionPlan] = useState<EAResponse | null>(null);
+  const [decisionReview, setDecisionReview] = useState<EAResponse | null>(null);
 
   /* ---------------- Boot ---------------- */
 
@@ -122,6 +123,78 @@ export default function DashboardPage() {
       setWalletBalance(bal.balance_credits);
     } catch (e: any) {
       setWalletErr(e?.message || "Failed to fetch wallet balance");
+    }
+  }
+  
+  async function runDecisionReviewFromPlan() {
+    if (!me?.id) return;
+
+    const tok = readTokenSafe();
+    if (!tok) {
+      router.push("/login");
+      return;
+    }
+
+    if (!executionPlan?.ui) {
+      // No plan yet; nothing to review
+      setDecisionReview({
+        ui: {
+          error: "No execution plan available to review. Please run Upload & Analyze first.",
+          stdout: "",
+          stderr: "",
+          returncode: 0,
+        },
+      } as any);
+      return;
+    }
+
+    try {
+      // Convert the existing execution plan into document_text
+      const packet = {
+        label: "Decision Review Input",
+        source: { type: "execution_plan" },
+        document_text: JSON.stringify(executionPlan.ui, null, 2),
+        meta: { mode: "decision_review_from_plan" },
+      };
+
+      const res = await fetch(`${BOS_BASE}/run-ea`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${tok}`,
+        },
+        body: JSON.stringify({
+          packet,
+          user_id: me.id,
+          plan_tier: planTier,
+          timeout_sec: 180,
+          num_predict: 384,
+        }),
+      });
+
+      const raw = await res.text();
+      let data: any = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {}
+
+      if (!res.ok) {
+        const msg = data?.detail || data?.message || raw || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+
+      // api_server.py returns either {ui: ...} or direct EA json
+      const uiObj = data?.ui ? data : { ui: data };
+      setDecisionReview(uiObj);
+    } catch (e: any) {
+      setDecisionReview({
+        ui: {
+          error: e?.message || "Decision Review failed",
+          stdout: "",
+          stderr: "",
+          returncode: 0,
+        },
+      } as any);
     }
   }
 
@@ -286,7 +359,7 @@ export default function DashboardPage() {
         {me && (
           <BOSUploadPanel
             planTier={planTier}
-            onRunComplete={(resp) => setLastRun(resp)}
+            onRunComplete={(resp) => setDecisionReview(resp)}
             className="mt-4"
           />
         )}
@@ -299,13 +372,37 @@ export default function DashboardPage() {
             planTier={planTier}
             walletBalance={walletBalance}
             onWalletUpdate={(b) => setWalletBalance(b)}
-            onRunComplete={(resp) => setLastRun(resp)}
+            onRunComplete={(resp) => setDecisionReview(resp)}
             className="mt-4"
           />
         )}
 
         {/* ---------------- Output ---------------- */}
-        {lastRun?.ui && <BOSSummary ui={lastRun.ui} title="Executive Action Plan" />}
+        {executionPlan?.ui && (
+          <BOSSummary ui={executionPlan.ui} title="Executive Action Plan" />
+        )}
+
+        {executionPlan?.ui && (
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={runDecisionReviewFromPlan}
+              className="rounded-xl border border-zinc-700 bg-zinc-950/40 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-900"
+            >
+              Review this plan
+            </button>
+
+            <span className="text-xs opacity-60">
+              Runs a governance-grade audit of the Executive Action Plan and highlights gaps, risks, and owner accountability.
+            </span>
+          </div>
+        )}
+
+
+        {decisionReview?.ui && (
+          <BOSSummary ui={decisionReview.ui} title="Decision Review" />
+        )}
+
 
         {/* ---------------- Loading overlay ---------------- */}
         {loading && (
