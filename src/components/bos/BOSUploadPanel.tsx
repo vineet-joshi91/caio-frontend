@@ -20,6 +20,81 @@ function readTokenSafe(): string {
   }
 }
 
+function extractLastJsonObject(text: string): any | null {
+  if (!text) return null;
+
+  const starts: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "{") starts.push(i);
+  }
+  if (starts.length === 0) return null;
+
+  // Try from end: find last complete brace-balanced JSON object
+  for (let s = starts.length - 1; s >= 0; s--) {
+    const start = starts[s];
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === "\\") esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      } else {
+        if (ch === '"') inStr = true;
+        else if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) {
+            const candidate = text.slice(start, i + 1);
+            try {
+              return JSON.parse(candidate);
+            } catch {
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function normalizeEAResponse(data: any): any {
+  // Expect { ui: {...} } but allow other shapes
+  const ui = data?.ui ?? data ?? {};
+  if (!ui || typeof ui !== "object") return data;
+
+  // If EA fields are already present, return as-is
+  if (ui.executive_summary || ui.top_priorities || ui.owner_matrix) {
+    return { ui };
+  }
+
+  // Otherwise, try to parse last JSON object from stdout
+  const stdout = typeof ui.stdout === "string" ? ui.stdout : "";
+  const parsed = extractLastJsonObject(stdout);
+
+  if (parsed && typeof parsed === "object" && (parsed.executive_summary || parsed.top_priorities)) {
+    // Carry forward debug + meta fields
+    const merged = {
+      ...parsed,
+      stdout: ui.stdout ?? "",
+      stderr: ui.stderr ?? "",
+      returncode: ui.returncode ?? 0,
+      warnings: ui.warnings ?? [],
+      extract_meta: ui.extract_meta ?? null,
+    };
+    return { ui: merged };
+  }
+
+  // Fallback: return whatever we got
+  return { ui };
+}
+
 export function BOSUploadPanel({
   planTier,
   onRunComplete,
@@ -55,8 +130,8 @@ export function BOSUploadPanel({
 
       // Optional tuning params (backend supports query params)
       const url = new URL(`${BOS_BASE}/upload-and-ea`);
-      url.searchParams.set("timeout_sec", "240");
-      url.searchParams.set("num_predict", "256");
+      url.searchParams.set("timeout_sec", "600");
+      url.searchParams.set("num_predict", "768");
       // planTier is used by frontend; backend may ignore it here (fine).
 
       const res = await fetch(url.toString(), {
@@ -77,6 +152,7 @@ export function BOSUploadPanel({
 
       if (!res.ok) {
         const msg =
+          data?.ui?.error ||
           data?.detail ||
           data?.message ||
           raw ||
@@ -85,7 +161,9 @@ export function BOSUploadPanel({
       }
 
       // data should match EAResponse shape or contain { ui: ... }
-      onRunComplete?.(data as EAResponse);
+      const normalized = normalizeEAResponse(data);
+      onRunComplete?.(normalized as EAResponse);
+
     } catch (e: any) {
       setErr(e?.message || "Analyze failed");
     } finally {
