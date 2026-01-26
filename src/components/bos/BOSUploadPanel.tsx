@@ -110,6 +110,8 @@ export function BOSUploadPanel({
 
   const canRun = useMemo(() => !!file && !running, [file, running]);
 
+  console.log("BOSUploadPanel vNEXT: parsing stdout into ui fields");
+
   async function onAnalyze() {
     setErr(null);
     if (!file) {
