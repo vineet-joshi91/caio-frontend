@@ -16,6 +16,20 @@ import {
   type PlanTier,
 } from "@/lib/validator";
 
+function extractEAFromStdout(stdout?: string) {
+  if (!stdout) return null;
+
+  // grab the last JSON object in stdout
+  const match = stdout.match(/\{[\s\S]*\}$/);
+  if (!match) return null;
+
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+}
+
 /* ---------------- Config ---------------- */
 
 const BOS_BASE =
@@ -336,7 +350,22 @@ export default function DashboardPage() {
           <BOSUploadPanel
             planTier={planTier}
             onRunComplete={(resp) => {
-              setExecutionPlan(resp);
+              // Case 1: backend already returned clean EA (future-proof)
+              if ((resp as any)?.executive_summary) {
+                setExecutionPlan(resp);
+              } else {
+                // Case 2: current backend → EA is inside ui.stdout
+                const parsed = extractEAFromStdout((resp as any)?.ui?.stdout);
+
+                if (!parsed) {
+                  console.error("Failed to parse EA from response", resp);
+                  setDecisionReviewErr("Failed to parse Executive Action Plan");
+                  return;
+                }
+
+                setExecutionPlan(parsed);
+              }
+
               // reset decision review when a new plan is generated
               setDecisionReview(null);
               setDecisionReviewErr(null);

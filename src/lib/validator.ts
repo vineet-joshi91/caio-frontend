@@ -91,3 +91,17 @@ export async function fetchWalletBalance(userId: number): Promise<WalletBalanceR
 
   return (await res.json()) as WalletBalanceResponse;
 }
+
+export function extractEAFromStdout(stdout?: string): any | null {
+  if (!stdout) return null;
+
+  // Find last JSON object in the string
+  const match = stdout.match(/\{[\s\S]*\}$/);
+  if (!match) return null;
+
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+}
