@@ -50,7 +50,14 @@ function extractEAFromStdout(stdout?: string) {
             const candidate = stdout.slice(start, i + 1);
             try {
               const obj = JSON.parse(candidate);
-              if (obj && typeof obj === "object" && (obj.executive_summary || obj.top_priorities)) {
+              if (
+                obj &&
+                typeof obj === "object" &&
+                typeof obj.executive_summary === "string" &&
+                Array.isArray(obj.top_priorities) &&
+                obj.owner_matrix
+              ) {
+
                 return obj; // only accept EA-like objects
               }
             } catch {
@@ -385,9 +392,9 @@ export default function DashboardPage() {
           <BOSUploadPanel
             planTier={planTier}
             onRunComplete={(resp) => {
-              // Case 1: backend already returned clean EA (future-proof)
+              // Case 1: backend returned EA directly (future-proof)
               if ((resp as any)?.executive_summary) {
-                setExecutionPlan(resp);
+                setExecutionPlan({ ui: resp } as any);
               } else {
                 // Case 2: current backend → EA is inside ui.stdout
                 const parsed = extractEAFromStdout((resp as any)?.ui?.stdout);
@@ -398,13 +405,14 @@ export default function DashboardPage() {
                   return;
                 }
 
-                setExecutionPlan(parsed);
+                setExecutionPlan({ ui: parsed } as any);
               }
 
               // reset decision review when a new plan is generated
               setDecisionReview(null);
               setDecisionReviewErr(null);
             }}
+
             className="mt-4"
           />
         )}
