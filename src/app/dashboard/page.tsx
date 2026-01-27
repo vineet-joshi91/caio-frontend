@@ -19,16 +19,51 @@ import {
 function extractEAFromStdout(stdout?: string) {
   if (!stdout) return null;
 
-  // grab the last JSON object in stdout
-  const match = stdout.match(/\{[\s\S]*\}$/);
-  if (!match) return null;
-
-  try {
-    return JSON.parse(match[0]);
-  } catch {
-    return null;
+  // collect all '{' positions
+  const starts: number[] = [];
+  for (let i = 0; i < stdout.length; i++) {
+    if (stdout[i] === "{") starts.push(i);
   }
+  if (starts.length === 0) return null;
+
+  // try from the end: last complete JSON object wins
+  for (let s = starts.length - 1; s >= 0; s--) {
+    const start = starts[s];
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+
+    for (let i = start; i < stdout.length; i++) {
+      const ch = stdout[i];
+
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === "\\") esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      } else {
+        if (ch === '"') inStr = true;
+        else if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) {
+            const candidate = stdout.slice(start, i + 1);
+            try {
+              const obj = JSON.parse(candidate);
+              if (obj && typeof obj === "object" && (obj.executive_summary || obj.top_priorities)) {
+                return obj; // only accept EA-like objects
+              }
+            } catch {
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+  return null;
 }
+
 
 /* ---------------- Config ---------------- */
 
@@ -194,7 +229,7 @@ export default function DashboardPage() {
           user_id: me.id,
           plan_tier: planTier,
           timeout_sec: 600,
-          num_predict: 768,
+          num_predict: 512,
         }),
       });
 
