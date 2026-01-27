@@ -179,8 +179,8 @@ export default function DashboardPage() {
           packet,
           user_id: me.id,
           plan_tier: planTier,
-          timeout_sec: 180,
-          num_predict: 384,
+          timeout_sec: 600,
+          num_predict: 768,
         }),
       });
 
