@@ -134,6 +134,7 @@ export function BOSUploadPanel({
       const url = new URL(`${BOS_BASE}/upload-and-ea`);
       url.searchParams.set("timeout_sec", "600");
       url.searchParams.set("num_predict", "768");
+      url.searchParams.set("model", "qwen2.5:3b-instruct");
       // planTier is used by frontend; backend may ignore it here (fine).
 
       const res = await fetch(url.toString(), {
