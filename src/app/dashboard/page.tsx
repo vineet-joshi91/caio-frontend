@@ -210,18 +210,25 @@ export default function DashboardPage() {
       return;
     }
 
-    if (!executionPlan?.ui) {
-      setDecisionReviewErr("No Executive Action Plan available to review. Please run Upload & Analyze first.");
+    // IMPORTANT: executionPlan may be either:
+    // 1) { ui: <plan> }  OR
+    // 2) <plan> directly (depending on earlier parsing)
+    const planObj = (executionPlan as any)?.ui ?? (executionPlan as any);
+
+    if (!planObj || !planObj.executive_summary) {
+      setDecisionReviewErr(
+        "No Executive Action Plan available to review. Please run Upload & Analyze first."
+      );
       return;
     }
 
     setDecisionReviewBusy(true);
     try {
-      // Convert the plan UI to a document_text packet (satisfies backend guard)
+      // Convert the plan to a document_text packet (satisfies backend guard)
       const packet = {
         label: "Decision Review Input",
         source: { type: "execution_plan" },
-        document_text: JSON.stringify(executionPlan.ui, null, 2),
+        document_text: JSON.stringify(planObj, null, 2),
         meta: { mode: "decision_review_from_plan" },
       };
 
@@ -236,30 +243,42 @@ export default function DashboardPage() {
           user_id: me.id,
           plan_tier: planTier,
           timeout_sec: 600,
-          num_predict: 768,
-          model: "phi3:mini", 
+          num_predict: 512,              // faster; increase later if needed
+          model: "qwen2.5:3b-instruct",  // phi3:mini will fail on your RAM
         }),
       });
 
       const raw = await res.text();
-      let data: any = {};
+      let data: any = null;
       try {
-        data = raw ? JSON.parse(raw) : {};
-      } catch {}
+        data = raw ? JSON.parse(raw) : null;
+      } catch {
+        data = null;
+      }
 
       if (!res.ok) {
-        const msg = data?.detail || data?.message || raw || `HTTP ${res.status}`;
+        const msg =
+          data?.detail ||
+          data?.message ||
+          raw ||
+          `HTTP ${res.status}`;
         throw new Error(msg);
       }
 
-      // normalize to { ui: ... }
-      setDecisionReview({ ui: data?.ui ?? data } as any);
+      // Normalize output shape
+      const ui = data?.ui ?? data;
+      if (!ui) {
+        throw new Error("Decision Review returned empty response");
+      }
+
+      setDecisionReview({ ui } as any);
     } catch (e: any) {
       setDecisionReviewErr(e?.message || "Decision Review failed");
     } finally {
       setDecisionReviewBusy(false);
     }
   }
+
 
   /* ---------------- Redirect UI ---------------- */
 
