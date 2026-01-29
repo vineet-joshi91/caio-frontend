@@ -237,7 +237,7 @@ export default function DashboardPage() {
           plan_tier: planTier,
           timeout_sec: 600,
           num_predict: 768,
-          model: "phi3:mini",
+          model: "phi3:mini", 
         }),
       });
 
