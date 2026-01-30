@@ -232,6 +232,8 @@ export default function DashboardPage() {
         meta: { mode: "decision_review_from_plan" },
       };
 
+      console.log("DECISION_REVIEW_BUILD_MARKER v2: using qwen3b + num_predict 123");
+
       const res = await fetch(`${BOS_BASE}/run-ea`, {
         method: "POST",
         headers: {
@@ -243,7 +245,7 @@ export default function DashboardPage() {
           user_id: me.id,
           plan_tier: planTier,
           timeout_sec: 600,
-          num_predict: 512,              // faster; increase later if needed
+          num_predict: 768,              // faster; increase later if needed
           model: "qwen2.5:3b-instruct",  // phi3:mini will fail on your RAM
         }),
       });
