@@ -6,47 +6,21 @@ import React, { useMemo } from "react";
  * Extract the LAST complete JSON object from stdout (brace-balanced).
  * This avoids greedy "first { to last }" problems when stdout contains multiple JSON blobs.
  */
-function extractLastJsonObject(stdout?: string): any | null {
+function extractDecisionJsonFromStdout(stdout?: string): any | null {
   if (!stdout) return null;
 
-  const starts: number[] = [];
-  for (let i = 0; i < stdout.length; i++) {
-    if (stdout[i] === "{") starts.push(i);
+  // Find the last occurrence of a JSON object that starts at a new line.
+  // Your logs print the JSON on a fresh line.
+  const idx = stdout.lastIndexOf("\n{");
+  const start = idx >= 0 ? idx + 1 : stdout.lastIndexOf("{");
+  if (start < 0) return null;
+
+  const candidate = stdout.slice(start).trim();
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    return null;
   }
-  if (starts.length === 0) return null;
-
-  for (let s = starts.length - 1; s >= 0; s--) {
-    const start = starts[s];
-    let depth = 0;
-    let inStr = false;
-    let esc = false;
-
-    for (let i = start; i < stdout.length; i++) {
-      const ch = stdout[i];
-
-      if (inStr) {
-        if (esc) esc = false;
-        else if (ch === "\\") esc = true;
-        else if (ch === '"') inStr = false;
-        continue;
-      } else {
-        if (ch === '"') inStr = true;
-        else if (ch === "{") depth++;
-        else if (ch === "}") {
-          depth--;
-          if (depth === 0) {
-            const candidate = stdout.slice(start, i + 1);
-            try {
-              return JSON.parse(candidate);
-            } catch {
-              break;
-            }
-          }
-        }
-      }
-    }
-  }
-  return null;
 }
 
 function valOrDash(v: any) {
@@ -90,7 +64,7 @@ export function BOSSummary({
       return ui;
     }
 
-    const extracted = extractLastJsonObject(ui.stdout);
+    const extracted = extractDecisionJsonFromStdout(ui.stdout);
     return extracted || ui;
   }, [ui]);
 
