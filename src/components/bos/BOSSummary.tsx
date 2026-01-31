@@ -2,15 +2,10 @@
 
 import React, { useMemo } from "react";
 
-/**
- * Extract the LAST complete JSON object from stdout (brace-balanced).
- * This avoids greedy "first { to last }" problems when stdout contains multiple JSON blobs.
- */
 function extractDecisionJsonFromStdout(stdout?: string): any | null {
   if (!stdout) return null;
 
-  // Find the last occurrence of a JSON object that starts at a new line.
-  // Your logs print the JSON on a fresh line.
+  // Try to parse the final JSON block printed at the end of stdout
   const idx = stdout.lastIndexOf("\n{");
   const start = idx >= 0 ? idx + 1 : stdout.lastIndexOf("{");
   if (start < 0) return null;
@@ -40,26 +35,19 @@ function asStringList(v: any): string[] {
     .filter(Boolean);
 }
 
-export function BOSSummary({
-  ui,
-  title = "Executive Action Plan",
-}: {
-  ui: any;
-  title?: string;
-}) {
-  // Support:
-  // 1) ui already structured (direct keys)
-  // 2) ui.stdout contains JSON block
+export function BOSSummary({ ui, title = "Executive Action Plan" }: { ui: any; title?: string }) {
   const parsed = useMemo(() => {
     if (!ui) return null;
 
-    // If ui already looks like EA or Decision Review, use it
+    // If already structured EA/DR, use directly
     if (
       ui.executive_summary ||
-      ui.review_summary ||
+      ui.plan_summary ||
+      ui.review_summary || // legacy
       ui._meta ||
       ui.top_priorities ||
-      ui.critical_gaps
+      ui.critical_gaps ||
+      ui.recommendation
     ) {
       return ui;
     }
@@ -68,17 +56,8 @@ export function BOSSummary({
     return extracted || ui;
   }, [ui]);
 
-  const engine =
-    parsed?._meta?.engine ||
-    parsed?.engine ||
-    ui?._meta?.engine ||
-    "—";
-
-  const model =
-    parsed?._meta?.model ||
-    parsed?.model ||
-    ui?._meta?.model ||
-    "—";
+  const engine = parsed?._meta?.engine || parsed?.engine || ui?._meta?.engine || "—";
+  const model = parsed?._meta?.model || parsed?.model || ui?._meta?.model || "—";
 
   const confidence =
     parsed?.confidence ??
@@ -87,24 +66,30 @@ export function BOSSummary({
     ui?._meta?.confidence ??
     0;
 
-  // Detect mode: Decision Review vs Executive Plan
   const isDecisionReview =
-    !!parsed?.review_summary ||
-    !!parsed?.critical_gaps ||
+    !!parsed?.plan_summary ||
+    !!parsed?.recommendation ||
     title.toLowerCase().includes("decision review");
 
   // ==========================
-  // Decision Review fields
+  // Decision Review fields (NEW SCHEMA)
   // ==========================
-  const reviewSummary = parsed?.review_summary || "";
+  const planSummary: string =
+    parsed?.plan_summary ||
+    parsed?.review_summary || // legacy support
+    "";
 
-  const strengths = asStringList(parsed?.strengths);
-  const gaps = asStringList(parsed?.gaps);
   const criticalGaps = asStringList(parsed?.critical_gaps);
-  const riskFlags = asStringList(parsed?.risk_flags);
   const missingMetrics = asStringList(parsed?.missing_metrics);
-  const fixes7d = asStringList(parsed?.fixes_7d);
-  const fixes30d = asStringList(parsed?.fixes_30d);
+  const riskFlags = asStringList(parsed?.risk_flags);
+
+  const recommendation = parsed?.recommendation && typeof parsed.recommendation === "object"
+    ? parsed.recommendation
+    : null;
+
+  const verdict: string = recommendation?.verdict || "—";
+  const why: string[] = asStringList(recommendation?.why);
+  const nextSteps: string[] = asStringList(recommendation?.next_steps);
 
   // ==========================
   // Executive Plan fields
@@ -125,8 +110,7 @@ export function BOSSummary({
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">{title}</h2>
         <div className="text-xs opacity-70">
-          Confidence:{" "}
-          <span className="font-semibold">{Math.round(confidence * 100)}%</span>
+          Confidence: <span className="font-semibold">{Math.round(confidence * 100)}%</span>
         </div>
       </div>
 
@@ -155,90 +139,66 @@ export function BOSSummary({
       {isDecisionReview ? (
         <>
           <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
-            <div className="text-xs opacity-70">Review Summary</div>
+            <div className="text-xs opacity-70">Plan Summary</div>
             <div className="mt-2 text-sm leading-relaxed">
-              {reviewSummary || "—"}
+              {planSummary || "—"}
             </div>
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-            {(strengths.length > 0 || gaps.length > 0) && (
-              <>
-                <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
-                  <div className="text-xs opacity-70">Strengths</div>
-                  <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
-                    {(strengths.length ? strengths : ["—"]).map((p, i) => (
-                      <li key={i}>{p}</li>
-                    ))}
-                  </ul>
-                </div>
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
+              <div className="text-xs opacity-70">Critical Gaps</div>
+              <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
+                {(criticalGaps.length ? criticalGaps : ["—"]).map((x, i) => (
+                  <li key={i}>{x}</li>
+                ))}
+              </ul>
+            </div>
 
-                <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
-                  <div className="text-xs opacity-70">Gaps</div>
-                  <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
-                    {(gaps.length ? gaps : ["—"]).map((r, i) => (
-                      <li key={i}>{r}</li>
-                    ))}
-                  </ul>
-                </div>
-              </>
-            )}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
+              <div className="text-xs opacity-70">Missing Metrics</div>
+              <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
+                {(missingMetrics.length ? missingMetrics : ["—"]).map((x, i) => (
+                  <li key={i}>{x}</li>
+                ))}
+              </ul>
+            </div>
 
-            {criticalGaps.length > 0 && (
-              <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
-                <div className="text-xs opacity-70">Critical Gaps</div>
-                <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
-                  {criticalGaps.map((r, i) => (
-                    <li key={i}>{r}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {riskFlags.length > 0 && (
-              <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
-                <div className="text-xs opacity-70">Risk Flags</div>
-                <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
-                  {riskFlags.map((r, i) => (
-                    <li key={i}>{r}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {missingMetrics.length > 0 && (
-              <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
-                <div className="text-xs opacity-70">Missing Metrics</div>
-                <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
-                  {missingMetrics.map((r, i) => (
-                    <li key={i}>{r}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-4 md:col-span-2">
+              <div className="text-xs opacity-70">Risk Flags</div>
+              <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
+                {(riskFlags.length ? riskFlags : ["—"]).map((x, i) => (
+                  <li key={i}>{x}</li>
+                ))}
+              </ul>
+            </div>
           </div>
 
-          {(fixes7d.length > 0 || fixes30d.length > 0) && (
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
-                <div className="text-xs opacity-70">Fixes (7 days)</div>
-                <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
-                  {(fixes7d.length ? fixes7d : ["—"]).map((a, i) => (
-                    <li key={i}>{a}</li>
-                  ))}
-                </ul>
-              </div>
+          <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
+            <div className="text-xs opacity-70">Recommendation</div>
 
-              <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
-                <div className="text-xs opacity-70">Fixes (30 days)</div>
-                <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
-                  {(fixes30d.length ? fixes30d : ["—"]).map((a, i) => (
-                    <li key={i}>{a}</li>
-                  ))}
-                </ul>
-              </div>
+            <div className="mt-2 text-sm">
+              <span className="font-semibold">Verdict:</span> {verdict || "—"}
             </div>
-          )}
+
+            <div className="mt-3">
+              <div className="text-xs opacity-70">Why</div>
+              <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
+                {(why.length ? why : ["—"]).map((x, i) => (
+                  <li key={i}>{x}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="mt-3">
+              <div className="text-xs opacity-70">Next steps</div>
+              <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
+                {(nextSteps.length ? nextSteps : ["—"]).map((x, i) => (
+                  <li key={i}>{x}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
         </>
       ) : (
         /* ==========================
