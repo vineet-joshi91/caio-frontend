@@ -35,7 +35,16 @@ function asStringList(v: any): string[] {
     .filter(Boolean);
 }
 
-export function BOSSummary({ ui, title = "Executive Action Plan" }: { ui: any; title?: string }) {
+export function BOSSummary({
+  ui,
+  title = "Executive Action Plan",
+  showDiagnostics = false,
+}: {
+  ui: any;
+  title?: string;
+  showDiagnostics?: boolean;
+}) {
+
   const parsed = useMemo(() => {
     if (!ui) return null;
 
@@ -114,24 +123,26 @@ export function BOSSummary({ ui, title = "Executive Action Plan" }: { ui: any; t
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-3">
-          <div className="text-xs opacity-70">Model</div>
-          <div className="mt-1 text-sm font-semibold">{valOrDash(model)}</div>
-        </div>
+      {showDiagnostics && (
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-3">
+            <div className="text-xs opacity-70">Model</div>
+            <div className="mt-1 text-sm font-semibold">{valOrDash(model)}</div>
+          </div>
 
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-3">
-          <div className="text-xs opacity-70">Engine</div>
-          <div className="mt-1 text-sm font-semibold">{valOrDash(engine)}</div>
-        </div>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-3">
+            <div className="text-xs opacity-70">Engine</div>
+            <div className="mt-1 text-sm font-semibold">{valOrDash(engine)}</div>
+          </div>
 
-        <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-3">
-          <div className="text-xs opacity-70">Meta</div>
-          <div className="mt-1 text-xs opacity-85">
-            {parsed?._meta ? JSON.stringify(parsed._meta) : "{}"}
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-3">
+            <div className="text-xs opacity-70">Meta</div>
+            <div className="mt-1 text-xs opacity-85">
+              {parsed?._meta ? JSON.stringify(parsed._meta) : "{}"}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* ==========================
           Decision Review layout
@@ -259,7 +270,7 @@ export function BOSSummary({ ui, title = "Executive Action Plan" }: { ui: any; t
       )}
 
       {/* Optional debug */}
-      {ui?.stdout && (
+      {showDiagnostics && ui?.stdout && (
         <details className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/30 p-3">
           <summary className="cursor-pointer text-xs font-semibold opacity-80">
             Debug: raw stdout/stderr

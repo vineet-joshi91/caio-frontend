@@ -301,7 +301,7 @@ export default function DashboardPage() {
       <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
         <div className="max-w-3xl mx-auto">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl">
-            <h1 className="text-2xl font-semibold">Decision Review</h1>
+            <h1 className="text-2xl font-semibold">CAIO</h1>
             <p className="mt-2 text-sm opacity-80">
               Your session has expired or you’re not logged in.
             </p>
@@ -366,48 +366,62 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {/* Wallet */}
-        <WalletPill
-          balance={walletBalance}
-          loading={walletBalance === null && !walletErr}
-          error={walletErr}
-          onRefresh={() => me?.id && refreshWallet(me.id)}
-        />
+        {/* Credits / Wallet (collapsed utility) */}
+        <div className="relative">
+          <details className="group">
+            <summary className="flex cursor-pointer items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950/40 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900">
+              <span>Credits</span>
+              <span className="text-xs opacity-60">(usage & balance)</span>
+            </summary>
 
-        {/* Credits actions */}
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => me?.id && refreshWallet(me.id)}
-            className="rounded-xl border border-zinc-700 bg-zinc-950/40 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-900"
-          >
-            Refresh credits
-          </button>
+            <div className="mt-3 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
+              {/* Wallet balance */}
+              <WalletPill
+                balance={walletBalance}
+                loading={walletBalance === null && !walletErr}
+                error={walletErr}
+                onRefresh={() => me?.id && refreshWallet(me.id)}
+              />
 
-          <button
-            type="button"
-            onClick={() => router.push("/payments")}
-            className="rounded-xl bg-blue-600 px-3 py-2 text-sm text-white shadow hover:bg-blue-500"
-          >
-            Top up credits
-          </button>
+              {/* Actions */}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => me?.id && refreshWallet(me.id)}
+                  className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-900"
+                >
+                  Refresh
+                </button>
 
-          <span className="text-xs opacity-60">
-            Credits control usage (pay-as-you-go). No subscriptions.
-          </span>
+                <button
+                  type="button"
+                  onClick={() => router.push("/payments")}
+                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-500"
+                >
+                  Add credits
+                </button>
+              </div>
+
+              {/* Wallet error */}
+              {walletErr && (
+                <div className="rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-xs text-red-100">
+                  Credits unavailable. Try refreshing or re-login.
+                </div>
+              )}
+
+              {/* Ledger (advanced / optional) */}
+              {me?.id && (
+                <details className="group">
+                  <summary className="cursor-pointer text-xs opacity-60 hover:opacity-90">
+                    View credit usage
+                  </summary>
+                  <WalletLedger userId={me.id} className="mt-2" />
+                </details>
+              )}
+            </div>
+          </details>
         </div>
 
-        {walletErr && (
-          <div className="rounded-2xl border border-red-400/30 bg-red-500/10 p-4 text-sm text-red-100">
-            <div className="font-semibold mb-1">Credits unavailable</div>
-            <div className="opacity-90">
-              We couldn’t load your credit balance right now. Try refresh. If it persists, log out and log in again.
-            </div>
-          </div>
-        )}
-
-        {/* Ledger */}
-        {me?.id && <WalletLedger userId={me.id} className="mt-2" />}
 
         {/* Upload (Execution plan source) */}
         {me && (
@@ -441,7 +455,7 @@ export default function DashboardPage() {
 
         {/* Execution Plan output */}
         {executionPlan?.ui && (
-          <BOSSummary ui={executionPlan.ui} title="Executive Action Plan" />
+          <BOSSummary ui={executionPlan.ui} title="Executive Action Plan" showDiagnostics={false} />
         )}
 
         {/* Decision Review trigger (from plan) */}
@@ -475,7 +489,7 @@ export default function DashboardPage() {
 
         {/* Decision Review output (separate, never overwrites exec plan) */}
         {decisionReview?.ui && (
-          <BOSSummary ui={decisionReview.ui} title="Decision Review" />
+          <BOSSummary ui={decisionReview.ui} title="Decision Review" showDiagnostics={false} />
         )}
 
         {/* Admin-only advanced manual runner (kept, but not default) */}
