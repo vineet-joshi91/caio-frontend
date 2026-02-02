@@ -20,6 +20,10 @@ function readTokenSafe(): string {
   }
 }
 
+/**
+ * Extract the last brace-balanced JSON object from a string.
+ * Used to recover the final EA JSON from stdout logs.
+ */
 function extractLastJsonObject(text: string): any | null {
   if (!text) return null;
 
@@ -29,7 +33,6 @@ function extractLastJsonObject(text: string): any | null {
   }
   if (starts.length === 0) return null;
 
-  // Try from end: find last complete brace-balanced JSON object
   for (let s = starts.length - 1; s >= 0; s--) {
     const start = starts[s];
     let depth = 0;
@@ -74,12 +77,16 @@ function normalizeEAResponse(data: any): any {
     return { ui };
   }
 
-  // Otherwise, try to parse last JSON object from stdout
+  // Otherwise, try to parse the final JSON object from stdout
   const stdout = typeof ui.stdout === "string" ? ui.stdout : "";
   const parsed = extractLastJsonObject(stdout);
 
-  if (parsed && typeof parsed === "object" && (parsed.executive_summary || parsed.top_priorities)) {
-    // Carry forward debug + meta fields
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    (typeof parsed.executive_summary === "string" || Array.isArray(parsed.top_priorities))
+  ) {
+    // Carry forward debug/meta fields (but we won't display them to users)
     const merged = {
       ...parsed,
       stdout: ui.stdout ?? "",
@@ -91,7 +98,6 @@ function normalizeEAResponse(data: any): any {
     return { ui: merged };
   }
 
-  // Fallback: return whatever we got
   return { ui };
 }
 
@@ -110,10 +116,9 @@ export function BOSUploadPanel({
 
   const canRun = useMemo(() => !!file && !running, [file, running]);
 
-  console.log("BOSUploadPanel vNEXT: parsing stdout into ui fields");
-
   async function onAnalyze() {
     setErr(null);
+
     if (!file) {
       setErr("Please choose a file first.");
       return;
@@ -130,18 +135,15 @@ export function BOSUploadPanel({
       const fd = new FormData();
       fd.append("file", file);
 
-      // Optional tuning params (backend supports query params)
+      // Backend supports query params
       const url = new URL(`${BOS_BASE}/upload-and-ea`);
       url.searchParams.set("timeout_sec", "600");
-      url.searchParams.set("num_predict", "768");
+      url.searchParams.set("num_predict", "512"); // faster default
       url.searchParams.set("model", "qwen2.5:3b-instruct");
-      // planTier is used by frontend; backend may ignore it here (fine).
 
       const res = await fetch(url.toString(), {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${tok}`,
-        },
+        headers: { Authorization: `Bearer ${tok}` },
         body: fd,
       });
 
@@ -150,7 +152,7 @@ export function BOSUploadPanel({
       try {
         data = raw ? JSON.parse(raw) : {};
       } catch {
-        // if backend returns non-json, keep raw message
+        data = {};
       }
 
       if (!res.ok) {
@@ -163,10 +165,8 @@ export function BOSUploadPanel({
         throw new Error(msg);
       }
 
-      // data should match EAResponse shape or contain { ui: ... }
       const normalized = normalizeEAResponse(data);
       onRunComplete?.(normalized as EAResponse);
-
     } catch (e: any) {
       setErr(e?.message || "Analyze failed");
     } finally {
@@ -178,11 +178,11 @@ export function BOSUploadPanel({
     <section
       className={`rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5 shadow-xl ${className}`}
     >
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-lg font-semibold">Upload & Analyze</h2>
           <div className="text-xs opacity-70">
-            Upload a real business file → get a unified executive action plan
+            Upload a business document to generate an Executive Action Plan
           </div>
         </div>
 
@@ -190,20 +190,21 @@ export function BOSUploadPanel({
           type="button"
           onClick={onAnalyze}
           disabled={!canRun}
-          className="rounded-xl bg-blue-600 px-4 py-2 text-sm text-white shadow hover:bg-blue-500 disabled:opacity-60"
+          className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm text-white shadow hover:bg-blue-500 disabled:opacity-60"
         >
-          {running ? "Analyzing…" : "Analyze file"}
           {running && (
-            <div className="mt-3 rounded-xl border border-blue-400/20 bg-blue-500/10 p-3 text-sm text-blue-100">
-                <div className="font-semibold">Analysis in progress</div>
-                <div className="opacity-90">
-                Please be patient — complex files can take 30–90 seconds.
-                </div>
-            </div>
-            )}
-
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+          )}
+          {running ? "Analyzing" : "Analyze file"}
         </button>
       </div>
+
+      {running && (
+        <div className="mt-4 rounded-xl border border-blue-400/20 bg-blue-500/10 p-3 text-sm text-blue-100">
+          <div className="font-semibold">Processing</div>
+          <div className="opacity-90">Extracting text and generating your plan…</div>
+        </div>
+      )}
 
       <div className="mt-4 grid gap-3">
         <input
@@ -223,10 +224,6 @@ export function BOSUploadPanel({
             {err}
           </div>
         )}
-
-        <div className="text-xs opacity-60">
-          Tip: Start with a PDF or a short document first. Larger files take longer.
-        </div>
       </div>
     </section>
   );

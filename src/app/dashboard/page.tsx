@@ -301,7 +301,7 @@ export default function DashboardPage() {
       <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
         <div className="max-w-3xl mx-auto">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl">
-            <h1 className="text-2xl font-semibold">CAIO</h1>
+            <h1 className="text-2xl font-semibold">CAIO Insights</h1>
             <p className="mt-2 text-sm opacity-80">
               Your session has expired or you’re not logged in.
             </p>
@@ -337,7 +337,7 @@ export default function DashboardPage() {
         <header className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold">Decision Review</h1>
+              <h1 className="text-2xl font-semibold">CAIO’s Insights</h1>
               <p className="mt-1 text-sm opacity-80">
                 Signed in as <b>{me?.email}</b>
               </p>
@@ -473,10 +473,18 @@ export default function DashboardPage() {
                 type="button"
                 onClick={runDecisionReviewFromPlan}
                 disabled={decisionReviewBusy}
-                className="rounded-xl bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-500 disabled:opacity-60"
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-500 disabled:opacity-60"
               >
-                {decisionReviewBusy ? "Reviewing…" : "Review this plan"}
+                {decisionReviewBusy && (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                )}
+                {decisionReviewBusy ? "Reviewing" : "Review this plan"}
               </button>
+              {decisionReviewBusy && (
+                <div className="mt-3 text-xs opacity-70">
+                  Reviewing the plan for missing evidence, risks, and accountability…
+                </div>
+              )}
             </div>
 
             {decisionReviewErr && (
@@ -492,27 +500,7 @@ export default function DashboardPage() {
           <BOSSummary ui={decisionReview.ui} title="Decision Review" showDiagnostics={false} />
         )}
 
-        {/* Admin-only advanced manual runner (kept, but not default) */}
-        {me?.is_admin && (
-          <details className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-            <summary className="cursor-pointer text-sm font-semibold opacity-90">
-              Advanced (Admin): Manual Decision Review runner
-            </summary>
-
-            <div className="mt-3 text-xs opacity-70">
-              This is for testing validator packets directly. Most users should use “Review this plan”.
-            </div>
-
-            <BOSRunPanel
-              userId={me.id}
-              planTier={planTier}
-              walletBalance={walletBalance}
-              onWalletUpdate={(b) => setWalletBalance(b)}
-              onRunComplete={(resp) => setDecisionReview(resp)}
-              className="mt-3"
-            />
-          </details>
-        )}
+        
 
         {loading && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6">
