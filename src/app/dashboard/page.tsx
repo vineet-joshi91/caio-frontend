@@ -301,7 +301,7 @@ export default function DashboardPage() {
       <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
         <div className="max-w-3xl mx-auto">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl">
-            <h1 className="text-2xl font-semibold">CAIO Insights</h1>
+            <h1 className="text-2xl font-semibold">CAIO</h1>
             <p className="mt-2 text-sm opacity-80">
               Your session has expired or you’re not logged in.
             </p>
@@ -428,26 +428,33 @@ export default function DashboardPage() {
           <BOSUploadPanel
             planTier={planTier}
             onRunComplete={(resp) => {
-              // Case 1: backend returned EA directly (future-proof)
-              if ((resp as any)?.executive_summary) {
-                setExecutionPlan({ ui: resp } as any);
+              // BOSUploadPanel normalizes into: { ui: { executive_summary, ... } }
+              const ui = (resp as any)?.ui ?? resp;
+
+              // If ui already has EA fields, trust it (no extra parsing)
+              if (ui && typeof ui === "object" && typeof ui.executive_summary === "string") {
+                setExecutionPlan({ ui } as any);
               } else {
-                // Case 2: current backend → EA is inside ui.stdout
-                const parsed = extractEAFromStdout((resp as any)?.ui?.stdout);
+                // Only if absolutely needed, attempt stdout extraction
+                const stdout = (ui as any)?.stdout;
+                const parsed = typeof stdout === "string" ? extractEAFromStdout(stdout) : null;
 
                 if (!parsed) {
                   console.error("Failed to parse EA from response", resp);
-                  setDecisionReviewErr("Failed to parse Executive Action Plan");
+                  setDecisionReviewErr(
+                    "We received a response, but could not extract the Executive Action Plan."
+                  );
                   return;
                 }
 
                 setExecutionPlan({ ui: parsed } as any);
               }
 
-              // reset decision review when a new plan is generated
+              // Reset decision review when a new plan is generated
               setDecisionReview(null);
               setDecisionReviewErr(null);
             }}
+
 
             className="mt-4"
           />
@@ -485,6 +492,7 @@ export default function DashboardPage() {
                   Reviewing the plan for missing evidence, risks, and accountability…
                 </div>
               )}
+
             </div>
 
             {decisionReviewErr && (

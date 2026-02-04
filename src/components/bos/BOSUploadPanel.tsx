@@ -22,14 +22,18 @@ function readTokenSafe(): string {
 
 /**
  * Extract the last brace-balanced JSON object from a string.
- * Used to recover the final EA JSON from stdout logs.
+ * IMPORTANT: We only scan the tail to avoid freezing the UI on huge stdout.
  */
 function extractLastJsonObject(text: string): any | null {
   if (!text) return null;
 
+  // ✅ Only scan the end (final JSON is always near the end)
+  const TAIL_LIMIT = 80_000;
+  const slice = text.length > TAIL_LIMIT ? text.slice(-TAIL_LIMIT) : text;
+
   const starts: number[] = [];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === "{") starts.push(i);
+  for (let i = 0; i < slice.length; i++) {
+    if (slice[i] === "{") starts.push(i);
   }
   if (starts.length === 0) return null;
 
@@ -39,8 +43,8 @@ function extractLastJsonObject(text: string): any | null {
     let inStr = false;
     let esc = false;
 
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i];
+    for (let i = start; i < slice.length; i++) {
+      const ch = slice[i];
 
       if (inStr) {
         if (esc) esc = false;
@@ -53,7 +57,7 @@ function extractLastJsonObject(text: string): any | null {
         else if (ch === "}") {
           depth--;
           if (depth === 0) {
-            const candidate = text.slice(start, i + 1);
+            const candidate = slice.slice(start, i + 1);
             try {
               return JSON.parse(candidate);
             } catch {
@@ -64,40 +68,43 @@ function extractLastJsonObject(text: string): any | null {
       }
     }
   }
+
   return null;
 }
 
 function normalizeEAResponse(data: any): any {
-  // Expect { ui: {...} } but allow other shapes
   const ui = data?.ui ?? data ?? {};
-  if (!ui || typeof ui !== "object") return data;
+  if (!ui || typeof ui !== "object") return { ui: {} };
 
-  // If EA fields are already present, return as-is
+  // ✅ If EA fields already exist, trust them immediately
   if (ui.executive_summary || ui.top_priorities || ui.owner_matrix) {
     return { ui };
   }
 
-  // Otherwise, try to parse the final JSON object from stdout
+  // ✅ Otherwise recover from stdout (tail-scan)
   const stdout = typeof ui.stdout === "string" ? ui.stdout : "";
   const parsed = extractLastJsonObject(stdout);
 
   if (
     parsed &&
     typeof parsed === "object" &&
-    (typeof parsed.executive_summary === "string" || Array.isArray(parsed.top_priorities))
+    (typeof parsed.executive_summary === "string" ||
+      Array.isArray(parsed.top_priorities))
   ) {
-    // Carry forward debug/meta fields (but we won't display them to users)
-    const merged = {
-      ...parsed,
-      stdout: ui.stdout ?? "",
-      stderr: ui.stderr ?? "",
-      returncode: ui.returncode ?? 0,
-      warnings: ui.warnings ?? [],
-      extract_meta: ui.extract_meta ?? null,
+    return {
+      ui: {
+        ...parsed,
+        // keep debug fields internally (BOSSummary hides them anyway when showDiagnostics={false})
+        stdout: ui.stdout ?? "",
+        stderr: ui.stderr ?? "",
+        returncode: ui.returncode ?? 0,
+        warnings: ui.warnings ?? [],
+        extract_meta: ui.extract_meta ?? null,
+      },
     };
-    return { ui: merged };
   }
 
+  // fallback: at least return something
   return { ui };
 }
 
@@ -131,23 +138,28 @@ export function BOSUploadPanel({
     }
 
     setRunning(true);
+
+    const controller = new AbortController();
+    const kill = window.setTimeout(() => controller.abort(), 650_000); // ~10m50s hard stop
+
     try {
       const fd = new FormData();
       fd.append("file", file);
 
-      // Backend supports query params
       const url = new URL(`${BOS_BASE}/upload-and-ea`);
       url.searchParams.set("timeout_sec", "600");
-      url.searchParams.set("num_predict", "512"); // faster default
+      url.searchParams.set("num_predict", "512");
       url.searchParams.set("model", "qwen2.5:3b-instruct");
 
       const res = await fetch(url.toString(), {
         method: "POST",
         headers: { Authorization: `Bearer ${tok}` },
         body: fd,
+        signal: controller.signal,
       });
 
       const raw = await res.text();
+
       let data: any = {};
       try {
         data = raw ? JSON.parse(raw) : {};
@@ -168,8 +180,13 @@ export function BOSUploadPanel({
       const normalized = normalizeEAResponse(data);
       onRunComplete?.(normalized as EAResponse);
     } catch (e: any) {
-      setErr(e?.message || "Analyze failed");
+      if (e?.name === "AbortError") {
+        setErr("This is taking unusually long. Please retry once. If it persists, it’s likely OCR/parse overhead.");
+      } else {
+        setErr(e?.message || "Analyze failed");
+      }
     } finally {
+      window.clearTimeout(kill);
       setRunning(false);
     }
   }
@@ -202,14 +219,17 @@ export function BOSUploadPanel({
       {running && (
         <div className="mt-4 rounded-xl border border-blue-400/20 bg-blue-500/10 p-3 text-sm text-blue-100">
           <div className="font-semibold">Processing</div>
-          <div className="opacity-90">Extracting text and generating your plan…</div>
+          <div className="opacity-90">
+            Extracting text and generating your plan…
+          </div>
         </div>
       )}
 
       <div className="mt-4 grid gap-3">
         <input
           type="file"
-          className="block w-full text-sm text-zinc-200 file:mr-4 file:rounded-lg file:border-0 file:bg-zinc-800 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-zinc-100 hover:file:bg-zinc-700"
+          disabled={running}
+          className="block w-full text-sm text-zinc-200 file:mr-4 file:rounded-lg file:border-0 file:bg-zinc-800 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-zinc-100 hover:file:bg-zinc-700 disabled:opacity-60"
           onChange={(e) => setFile(e.target.files?.[0] || null)}
         />
 
