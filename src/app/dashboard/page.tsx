@@ -7,70 +7,9 @@ import LogoutButton from "@/components/LogoutButton";
 import { WalletPill } from "@/components/bos/WalletPill";
 import { WalletLedger } from "@/components/bos/WalletLedger";
 import { BOSUploadPanel } from "@/components/bos/BOSUploadPanel";
-import { BOSRunPanel } from "@/components/bos/BOSRunPanel";
 import { BOSSummary } from "@/components/bos/BOSSummary";
 
-import {
-  fetchWalletBalance,
-  type EAResponse,
-  type PlanTier,
-} from "@/lib/validator";
-
-function extractEAFromStdout(stdout?: string) {
-  if (!stdout) return null;
-
-  // collect all '{' positions
-  const starts: number[] = [];
-  for (let i = 0; i < stdout.length; i++) {
-    if (stdout[i] === "{") starts.push(i);
-  }
-  if (starts.length === 0) return null;
-
-  // try from the end: last complete JSON object wins
-  for (let s = starts.length - 1; s >= 0; s--) {
-    const start = starts[s];
-    let depth = 0;
-    let inStr = false;
-    let esc = false;
-
-    for (let i = start; i < stdout.length; i++) {
-      const ch = stdout[i];
-
-      if (inStr) {
-        if (esc) esc = false;
-        else if (ch === "\\") esc = true;
-        else if (ch === '"') inStr = false;
-        continue;
-      } else {
-        if (ch === '"') inStr = true;
-        else if (ch === "{") depth++;
-        else if (ch === "}") {
-          depth--;
-          if (depth === 0) {
-            const candidate = stdout.slice(start, i + 1);
-            try {
-              const obj = JSON.parse(candidate);
-              if (
-                obj &&
-                typeof obj === "object" &&
-                typeof obj.executive_summary === "string" &&
-                Array.isArray(obj.top_priorities) &&
-                obj.owner_matrix
-              ) {
-
-                return obj; // only accept EA-like objects
-              }
-            } catch {
-              break;
-            }
-          }
-        }
-      }
-    }
-  }
-  return null;
-}
-
+import { fetchWalletBalance, type EAResponse, type PlanTier } from "@/lib/validator";
 
 /* ---------------- Config ---------------- */
 
@@ -82,7 +21,7 @@ const IDENTITY_BASE =
   process.env.NEXT_PUBLIC_IDENTITY_BASE?.trim().replace(/\/+$/, "") ||
   "https://caioinsights.com";
 
-const BUILD_ID = "caio-bos-dashboard-v3-execplan-decisionreview";
+const BUILD_ID = "caio-bos-dashboard-v4-ui-clean";
 
 /* ---------------- Types ---------------- */
 
@@ -107,6 +46,16 @@ function readTokenSafe(): string {
   }
 }
 
+function isExecPlanUI(ui: any) {
+  return (
+    ui &&
+    typeof ui === "object" &&
+    typeof ui.executive_summary === "string" &&
+    Array.isArray(ui.top_priorities) &&
+    !!ui.owner_matrix
+  );
+}
+
 /* ---------------- Page ---------------- */
 
 export default function DashboardPage() {
@@ -120,7 +69,7 @@ export default function DashboardPage() {
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [walletErr, setWalletErr] = useState<string | null>(null);
 
-  // ✅ Two separate outputs
+  // Two separate outputs (never overwrite each other)
   const [executionPlan, setExecutionPlan] = useState<EAResponse | null>(null);
   const [decisionReview, setDecisionReview] = useState<EAResponse | null>(null);
 
@@ -142,7 +91,7 @@ export default function DashboardPage() {
 
     (async () => {
       try {
-        // ✅ must use bos-auth/me (not /me) because /me hits static site
+        // must use bos-auth/me (not /me) because /me hits static site
         const res = await fetch(`${IDENTITY_BASE}/bos-auth/me`, {
           headers: { Authorization: `Bearer ${t}` },
           cache: "no-store",
@@ -188,9 +137,7 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    if (me?.id) {
-      refreshWallet(me.id);
-    }
+    if (me?.id) refreshWallet(me.id);
   }, [me?.id]);
 
   /* ---------------- Derived ---------------- */
@@ -210,12 +157,8 @@ export default function DashboardPage() {
       return;
     }
 
-    // IMPORTANT: executionPlan may be either:
-    // 1) { ui: <plan> }  OR
-    // 2) <plan> directly (depending on earlier parsing)
-    const planObj = (executionPlan as any)?.ui ?? (executionPlan as any);
-
-    if (!planObj || !planObj.executive_summary) {
+    const planObj = (executionPlan as any)?.ui;
+    if (!isExecPlanUI(planObj)) {
       setDecisionReviewErr(
         "No Executive Action Plan available to review. Please run Upload & Analyze first."
       );
@@ -224,15 +167,12 @@ export default function DashboardPage() {
 
     setDecisionReviewBusy(true);
     try {
-      // Convert the plan to a document_text packet (satisfies backend guard)
       const packet = {
         label: "Decision Review Input",
         source: { type: "execution_plan" },
         document_text: JSON.stringify(planObj, null, 2),
         meta: { mode: "decision_review_from_plan" },
       };
-
-      console.log("DECISION_REVIEW_BUILD_MARKER v2: using qwen3b + num_predict 123");
 
       const res = await fetch(`${BOS_BASE}/run-ea`, {
         method: "POST",
@@ -245,8 +185,8 @@ export default function DashboardPage() {
           user_id: me.id,
           plan_tier: planTier,
           timeout_sec: 600,
-          num_predict: 768,              // faster; increase later if needed
-          model: "qwen2.5:3b-instruct",  // phi3:mini will fail on your RAM
+          num_predict: 768,
+          model: "qwen2.5:3b-instruct",
         }),
       });
 
@@ -259,20 +199,14 @@ export default function DashboardPage() {
       }
 
       if (!res.ok) {
-        const msg =
-          data?.detail ||
-          data?.message ||
-          raw ||
-          `HTTP ${res.status}`;
+        const msg = data?.detail || data?.message || raw || `HTTP ${res.status}`;
         throw new Error(msg);
       }
 
-      // Normalize output shape
       const ui = data?.ui ?? data;
-      if (!ui) {
-        throw new Error("Decision Review returned empty response");
-      }
+      if (!ui) throw new Error("Decision Review returned empty response");
 
+      // IMPORTANT: don't re-parse again; BOSSummary can extract from stdout if needed
       setDecisionReview({ ui } as any);
     } catch (e: any) {
       setDecisionReviewErr(e?.message || "Decision Review failed");
@@ -280,7 +214,6 @@ export default function DashboardPage() {
       setDecisionReviewBusy(false);
     }
   }
-
 
   /* ---------------- Redirect UI ---------------- */
 
@@ -332,7 +265,6 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
       <div className="max-w-5xl mx-auto space-y-6">
-
         {/* Header */}
         <header className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl">
           <div className="flex items-center justify-between gap-4">
@@ -348,18 +280,13 @@ export default function DashboardPage() {
 
             <div className="flex items-center gap-3">
               {me?.is_admin && (
-                <>
-                  <span className="rounded-full border border-purple-400/40 bg-purple-500/15 px-3 py-1 text-xs text-purple-200">
-                    Admin
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => router.push("/admin")}
-                    className="rounded-xl border border-zinc-700 bg-zinc-950/40 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900"
-                  >
-                    Admin Mode
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => router.push("/admin")}
+                  className="rounded-xl border border-zinc-700 bg-zinc-950/40 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-900"
+                >
+                  Admin Mode
+                </button>
               )}
               {token && <LogoutButton />}
             </div>
@@ -375,7 +302,6 @@ export default function DashboardPage() {
             </summary>
 
             <div className="mt-3 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
-              {/* Wallet balance */}
               <WalletPill
                 balance={walletBalance}
                 loading={walletBalance === null && !walletErr}
@@ -383,7 +309,6 @@ export default function DashboardPage() {
                 onRefresh={() => me?.id && refreshWallet(me.id)}
               />
 
-              {/* Actions */}
               <div className="flex items-center gap-3">
                 <button
                   type="button"
@@ -402,14 +327,12 @@ export default function DashboardPage() {
                 </button>
               </div>
 
-              {/* Wallet error */}
               {walletErr && (
                 <div className="rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-xs text-red-100">
                   Credits unavailable. Try refreshing or re-login.
                 </div>
               )}
 
-              {/* Ledger (advanced / optional) */}
               {me?.id && (
                 <details className="group">
                   <summary className="cursor-pointer text-xs opacity-60 hover:opacity-90">
@@ -422,41 +345,22 @@ export default function DashboardPage() {
           </details>
         </div>
 
-
-        {/* Upload (Execution plan source) */}
+        {/* Upload */}
         {me && (
           <BOSUploadPanel
             planTier={planTier}
             onRunComplete={(resp) => {
-              // BOSUploadPanel normalizes into: { ui: { executive_summary, ... } }
-              const ui = (resp as any)?.ui ?? resp;
-
-              // If ui already has EA fields, trust it (no extra parsing)
-              if (ui && typeof ui === "object" && typeof ui.executive_summary === "string") {
-                setExecutionPlan({ ui } as any);
+              // IMPORTANT: BOSUploadPanel already normalizes. Do NOT re-parse again here.
+              if ((resp as any)?.ui) {
+                setExecutionPlan(resp);
               } else {
-                // Only if absolutely needed, attempt stdout extraction
-                const stdout = (ui as any)?.stdout;
-                const parsed = typeof stdout === "string" ? extractEAFromStdout(stdout) : null;
-
-                if (!parsed) {
-                  console.error("Failed to parse EA from response", resp);
-                  setDecisionReviewErr(
-                    "We received a response, but could not extract the Executive Action Plan."
-                  );
-                  return;
-                }
-
-                setExecutionPlan({ ui: parsed } as any);
+                // ultra-safe fallback
+                setExecutionPlan({ ui: resp } as any);
               }
 
-              // Reset decision review when a new plan is generated
               setDecisionReview(null);
               setDecisionReviewErr(null);
             }}
-
-
-            className="mt-4"
           />
         )}
 
@@ -465,15 +369,20 @@ export default function DashboardPage() {
           <BOSSummary ui={executionPlan.ui} title="Executive Action Plan" showDiagnostics={false} />
         )}
 
-        {/* Decision Review trigger (from plan) */}
+        {/* Decision Review trigger */}
         {executionPlan?.ui && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold">Decision Review</div>
                 <div className="text-xs opacity-70">
                   Audit the Executive Action Plan for gaps, missing evidence, risks, and owner accountability.
                 </div>
+                {decisionReviewBusy && (
+                  <div className="mt-2 text-xs opacity-70">
+                    Reviewing the plan for missing evidence, risks, and accountability…
+                  </div>
+                )}
               </div>
 
               <button
@@ -487,12 +396,6 @@ export default function DashboardPage() {
                 )}
                 {decisionReviewBusy ? "Reviewing" : "Review this plan"}
               </button>
-              {decisionReviewBusy && (
-                <div className="mt-3 text-xs opacity-70">
-                  Reviewing the plan for missing evidence, risks, and accountability…
-                </div>
-              )}
-
             </div>
 
             {decisionReviewErr && (
@@ -503,12 +406,10 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Decision Review output (separate, never overwrites exec plan) */}
+        {/* Decision Review output */}
         {decisionReview?.ui && (
           <BOSSummary ui={decisionReview.ui} title="Decision Review" showDiagnostics={false} />
         )}
-
-        
 
         {loading && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6">
