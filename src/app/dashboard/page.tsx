@@ -56,61 +56,6 @@ function isExecPlanUI(ui: any) {
   );
 }
 
-function extractEAFromStdout(stdout?: string) {
-  if (!stdout) return null;
-
-  const starts: number[] = [];
-  for (let i = 0; i < stdout.length; i++) {
-    if (stdout[i] === "{") starts.push(i);
-  }
-  if (starts.length === 0) return null;
-
-  for (let s = starts.length - 1; s >= 0; s--) {
-    const start = starts[s];
-    let depth = 0;
-    let inStr = false;
-    let esc = false;
-
-    for (let i = start; i < stdout.length; i++) {
-      const ch = stdout[i];
-
-      if (inStr) {
-        if (esc) esc = false;
-        else if (ch === "\\") esc = true;
-        else if (ch === '"') inStr = false;
-        continue;
-      } else {
-        if (ch === '"') inStr = true;
-        else if (ch === "{") depth++;
-        else if (ch === "}") {
-          depth--;
-          if (depth === 0) {
-            const candidate = stdout.slice(start, i + 1);
-            try {
-              const obj = JSON.parse(candidate);
-
-              // EA-like shape check
-              if (
-                obj &&
-                typeof obj === "object" &&
-                typeof obj.executive_summary === "string" &&
-                Array.isArray(obj.top_priorities) &&
-                obj.owner_matrix
-              ) {
-                return obj;
-              }
-            } catch {
-              break;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return null;
-}
-
 /* ---------------- Page ---------------- */
 
 export default function DashboardPage() {
@@ -404,39 +349,23 @@ export default function DashboardPage() {
           <BOSUploadPanel
             planTier={planTier}
             onRunComplete={(resp) => {
-              // Always normalize from resp.ui first
+              // BOSUploadPanel already normalizes into { ui: <EA> }
               const ui = (resp as any)?.ui ?? resp;
 
-              // If ui already looks like an EA plan, accept it
-              const looksLikeEA =
-                ui &&
-                typeof ui === "object" &&
-                typeof ui.executive_summary === "string" &&
-                Array.isArray(ui.top_priorities) &&
-                ui.owner_matrix;
-
-              if (looksLikeEA) {
-                setExecutionPlan({ ui } as any);
+              // Hard guard: if UI doesn't look like an EA, don't set junk state
+              if (!ui || typeof ui !== "object" || typeof (ui as any).executive_summary !== "string") {
+                console.error("EA normalize failed: unexpected response shape", resp);
+                setExecutionPlan(null);
                 setDecisionReview(null);
-                setDecisionReviewErr(null);
+                setDecisionReviewErr("Failed to detect an Executive Action Plan. Please try again with a different file.");
                 return;
               }
 
-              // Otherwise try extracting EA from stdout
-              const parsed = extractEAFromStdout((ui as any)?.stdout);
-
-              if (!parsed) {
-                console.error("Failed to detect EA from response", resp);
-                setExecutionPlan(null); // IMPORTANT: don't keep stale/blank UI
-                setDecisionReview(null);
-                setDecisionReviewErr("Failed to detect an Executive Action Plan from this document.");
-                return;
-              }
-
-              setExecutionPlan({ ui: parsed } as any);
+              setExecutionPlan({ ui } as any);
               setDecisionReview(null);
               setDecisionReviewErr(null);
             }}
+
 
 
           />
