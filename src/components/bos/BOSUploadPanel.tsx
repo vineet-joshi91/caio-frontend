@@ -24,27 +24,18 @@ function readTokenSafe(): string {
  * Extract the last brace-balanced JSON object from a string.
  * IMPORTANT: We only scan the tail to avoid freezing the UI on huge stdout.
  */
-function extractLastJsonObject(text: string): any | null {
+function extractLastEAObject(text: string): any | null {
   if (!text) return null;
 
-  // ✅ Only scan the end (final JSON is always near the end)
-  const TAIL_LIMIT = 80_000;
-  const slice = text.length > TAIL_LIMIT ? text.slice(-TAIL_LIMIT) : text;
-
   const starts: number[] = [];
-  for (let i = 0; i < slice.length; i++) {
-    if (slice[i] === "{") starts.push(i);
-  }
-  if (starts.length === 0) return null;
+  for (let i = 0; i < text.length; i++) if (text[i] === "{") starts.push(i);
 
   for (let s = starts.length - 1; s >= 0; s--) {
     const start = starts[s];
-    let depth = 0;
-    let inStr = false;
-    let esc = false;
+    let depth = 0, inStr = false, esc = false;
 
-    for (let i = start; i < slice.length; i++) {
-      const ch = slice[i];
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
 
       if (inStr) {
         if (esc) esc = false;
@@ -57,9 +48,23 @@ function extractLastJsonObject(text: string): any | null {
         else if (ch === "}") {
           depth--;
           if (depth === 0) {
-            const candidate = slice.slice(start, i + 1);
+            const candidate = text.slice(start, i + 1);
             try {
-              return JSON.parse(candidate);
+              const obj = JSON.parse(candidate);
+
+              // reject error blobs
+              if (obj?.ui?.error) continue;
+
+              // accept EA-like objects
+              if (
+                obj &&
+                typeof obj === "object" &&
+                typeof obj.executive_summary === "string" &&
+                Array.isArray(obj.top_priorities) &&
+                obj.owner_matrix
+              ) {
+                return obj;
+              }
             } catch {
               break;
             }
@@ -68,33 +73,31 @@ function extractLastJsonObject(text: string): any | null {
       }
     }
   }
-
   return null;
 }
+
 
 function normalizeEAResponse(data: any): any {
   const ui = data?.ui ?? data ?? {};
   if (!ui || typeof ui !== "object") return { ui: {} };
 
-  // ✅ If EA fields already exist, trust them immediately
-  if (ui.executive_summary || ui.top_priorities || ui.owner_matrix) {
-    return { ui };
-  }
+  // ✅ If EA fields exist directly, trust them
+  const directEA =
+    typeof ui.executive_summary === "string" &&
+    Array.isArray(ui.top_priorities) &&
+    ui.owner_matrix &&
+    typeof ui.owner_matrix === "object";
 
-  // ✅ Otherwise recover from stdout (tail-scan)
+  if (directEA) return { ui };
+
   const stdout = typeof ui.stdout === "string" ? ui.stdout : "";
-  const parsed = extractLastJsonObject(stdout);
 
-  if (
-    parsed &&
-    typeof parsed === "object" &&
-    (typeof parsed.executive_summary === "string" ||
-      Array.isArray(parsed.top_priorities))
-  ) {
+  // ✅ Try to recover EA from stdout (even if stdout ends with an error JSON)
+  const parsedEA = extractLastEAObject(stdout);
+  if (parsedEA) {
     return {
       ui: {
-        ...parsed,
-        // keep debug fields internally (BOSSummary hides them anyway when showDiagnostics={false})
+        ...parsedEA,
         stdout: ui.stdout ?? "",
         stderr: ui.stderr ?? "",
         returncode: ui.returncode ?? 0,
@@ -104,9 +107,29 @@ function normalizeEAResponse(data: any): any {
     };
   }
 
-  // fallback: at least return something
+  // ✅ If we couldn't recover EA, but backend signaled an error inside ui or stdout, surface it
+  const backendErr =
+    ui?.error ||
+    ui?.detail ||
+    ui?.message ||
+    (typeof ui?.stderr === "string" && ui.stderr.trim() ? ui.stderr : null);
+
+  if (backendErr) {
+    return {
+      ui: {
+        error: String(backendErr),
+        stdout: ui.stdout ?? "",
+        stderr: ui.stderr ?? "",
+        returncode: ui.returncode ?? 0,
+        warnings: ui.warnings ?? [],
+        extract_meta: ui.extract_meta ?? null,
+      },
+    };
+  }
+
   return { ui };
 }
+
 
 export function BOSUploadPanel({
   planTier,
