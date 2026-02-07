@@ -24,15 +24,16 @@ function readTokenSafe(): string {
  * Extract the last brace-balanced JSON object from a string.
  * IMPORTANT: We only scan the tail to avoid freezing the UI on huge stdout.
  */
-function extractLastEAObject(text: string): any | null {
-  if (!text) return null;
+function extractAllJsonObjects(text: string): any[] {
+  const out: any[] = [];
+  if (!text) return out;
 
-  const starts: number[] = [];
-  for (let i = 0; i < text.length; i++) if (text[i] === "{") starts.push(i);
+  for (let start = 0; start < text.length; start++) {
+    if (text[start] !== "{") continue;
 
-  for (let s = starts.length - 1; s >= 0; s--) {
-    const start = starts[s];
-    let depth = 0, inStr = false, esc = false;
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
 
     for (let i = start; i < text.length; i++) {
       const ch = text[i];
@@ -50,54 +51,64 @@ function extractLastEAObject(text: string): any | null {
           if (depth === 0) {
             const candidate = text.slice(start, i + 1);
             try {
-              const obj = JSON.parse(candidate);
-
-              // reject error blobs
-              if (obj?.ui?.error) continue;
-
-              // accept EA-like objects
-              if (
-                obj &&
-                typeof obj === "object" &&
-                typeof obj.executive_summary === "string" &&
-                Array.isArray(obj.top_priorities) &&
-                obj.owner_matrix
-              ) {
-                return obj;
-              }
+              out.push(JSON.parse(candidate));
+              start = i; // jump forward
             } catch {
-              break;
+              // ignore
             }
+            break;
           }
         }
       }
     }
   }
+
+  return out;
+}
+
+function pickBestEA(objs: any[]): any | null {
+  // Prefer objects that look like EA output
+  const candidates = objs.filter(o =>
+    o &&
+    typeof o === "object" &&
+    (typeof o.executive_summary === "string" || typeof o.executive_summary === "string") &&
+    (Array.isArray(o.top_priorities) || Array.isArray(o.top_priorities))
+  );
+
+  // If multiple, pick the one with most content
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => {
+      const al = (a.executive_summary?.length || 0) + (a.top_priorities?.length || 0);
+      const bl = (b.executive_summary?.length || 0) + (b.top_priorities?.length || 0);
+      return bl - al;
+    });
+    return candidates[0];
+  }
+
   return null;
 }
+
 
 
 function normalizeEAResponse(data: any): any {
   const ui = data?.ui ?? data ?? {};
   if (!ui || typeof ui !== "object") return { ui: {} };
 
-  // ✅ If EA fields exist directly, trust them
-  const directEA =
-    typeof ui.executive_summary === "string" &&
-    Array.isArray(ui.top_priorities) &&
-    ui.owner_matrix &&
-    typeof ui.owner_matrix === "object";
-
-  if (directEA) return { ui };
+  // If EA fields already exist, trust them immediately
+  if (ui.executive_summary || ui.top_priorities || ui.owner_matrix) {
+    return { ui };
+  }
 
   const stdout = typeof ui.stdout === "string" ? ui.stdout : "";
 
-  // ✅ Try to recover EA from stdout (even if stdout ends with an error JSON)
-  const parsedEA = extractLastEAObject(stdout);
-  if (parsedEA) {
+  // NEW: scan all JSON objects and pick the best EA one, not the last one
+  const objs = extractAllJsonObjects(stdout);
+  const best = pickBestEA(objs);
+
+  if (best) {
     return {
       ui: {
-        ...parsedEA,
+        ...best,
         stdout: ui.stdout ?? "",
         stderr: ui.stderr ?? "",
         returncode: ui.returncode ?? 0,
@@ -107,28 +118,14 @@ function normalizeEAResponse(data: any): any {
     };
   }
 
-  // ✅ If we couldn't recover EA, but backend signaled an error inside ui or stdout, surface it
-  const backendErr =
-    ui?.error ||
-    ui?.detail ||
-    ui?.message ||
-    (typeof ui?.stderr === "string" && ui.stderr.trim() ? ui.stderr : null);
-
-  if (backendErr) {
-    return {
-      ui: {
-        error: String(backendErr),
-        stdout: ui.stdout ?? "",
-        stderr: ui.stderr ?? "",
-        returncode: ui.returncode ?? 0,
-        warnings: ui.warnings ?? [],
-        extract_meta: ui.extract_meta ?? null,
-      },
-    };
+  // If backend signalled error, surface it
+  if (ui.error) {
+    return { ui };
   }
 
   return { ui };
 }
+
 
 
 export function BOSUploadPanel({
