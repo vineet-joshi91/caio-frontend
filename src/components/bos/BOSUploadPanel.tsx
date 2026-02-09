@@ -90,20 +90,55 @@ function pickBestEA(objs: any[]): any | null {
 
 
 
+function looksLikeEA(obj: any) {
+  if (!obj || typeof obj !== "object") return false;
+  const o = obj.ui && typeof obj.ui === "object" ? obj.ui : obj;
+
+  return (
+    typeof o.executive_summary === "string" ||
+    Array.isArray(o.top_priorities) ||
+    (o.owner_matrix && typeof o.owner_matrix === "object")
+  );
+}
+
+// Tries many candidates from stdout and returns the FIRST best EA-looking object.
+function extractBestEAObject(stdout: string): any | null {
+  if (!stdout) return null;
+
+  // Strategy: scan from the end, try to JSON.parse at many "{"
+  // and keep the first parsed object that "looks like EA".
+  for (let i = stdout.length - 1; i >= 0; i--) {
+    if (stdout[i] !== "{") continue;
+
+    const slice = stdout.slice(i);
+    // stop huge parsing attempts
+    if (slice.length > 20000) continue;
+
+    try {
+      const parsed = JSON.parse(slice);
+      if (looksLikeEA(parsed)) {
+        return parsed.ui && typeof parsed.ui === "object" ? parsed.ui : parsed;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+
 function normalizeEAResponse(data: any): any {
   const ui = data?.ui ?? data ?? {};
   if (!ui || typeof ui !== "object") return { ui: {} };
 
-  // If EA fields already exist, trust them immediately
+  // 1) If EA fields already exist, trust them immediately
   if (ui.executive_summary || ui.top_priorities || ui.owner_matrix) {
     return { ui };
   }
 
+  // 2) Otherwise recover from stdout (pick BEST match, not LAST)
   const stdout = typeof ui.stdout === "string" ? ui.stdout : "";
-
-  // NEW: scan all JSON objects and pick the best EA one, not the last one
-  const objs = extractAllJsonObjects(stdout);
-  const best = pickBestEA(objs);
+  const best = extractBestEAObject(stdout);
 
   if (best) {
     return {
@@ -118,13 +153,9 @@ function normalizeEAResponse(data: any): any {
     };
   }
 
-  // If backend signalled error, surface it
-  if (ui.error) {
-    return { ui };
-  }
-
   return { ui };
 }
+
 
 
 
