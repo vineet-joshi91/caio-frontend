@@ -56,6 +56,17 @@ function isExecPlanUI(ui: any) {
   );
 }
 
+function normalizeTier(raw?: string, isAdmin?: boolean): "standard" | "premium" | "enterprise" {
+  if (isAdmin) return "enterprise";
+
+  const t = (raw || "").toLowerCase().trim();
+
+  if (t === "enterprise" || t === "admin") return "enterprise";
+  if (t === "premium" || t === "pro") return "premium";
+
+  return "standard";
+}
+
 /* ---------------- Page ---------------- */
 
 export default function DashboardPage() {
@@ -142,7 +153,10 @@ export default function DashboardPage() {
 
   /* ---------------- Derived ---------------- */
 
-  const planTier: PlanTier = me?.is_admin ? "enterprise" : "demo";
+  const userTier = normalizeTier(me?.tier, !!me?.is_admin);
+  const execPlanTier: PlanTier = userTier === "enterprise" ? "enterprise" : "standard";
+  const decisionReviewTier: PlanTier = userTier === "enterprise" ? "enterprise" : "premium";
+  const canDecisionReview = userTier === "premium" || userTier === "enterprise";
 
   /* ---------------- Decision Review runner (from plan) ---------------- */
 
@@ -163,6 +177,10 @@ export default function DashboardPage() {
       return;
     }
 
+    if (!canDecisionReview) {
+      setDecisionReviewErr("Decision Review is a Premium feature. Upgrade to Premium to unlock it.");
+      return;
+    }
 
     setDecisionReviewBusy(true);
     try {
@@ -182,7 +200,7 @@ export default function DashboardPage() {
         body: JSON.stringify({
           packet,
           user_id: me.id,
-          plan_tier: planTier,
+          plan_tier: decisionReviewTier,
           timeout_sec: 600,
           num_predict: 768,
           model: "qwen2.5:3b-instruct",
@@ -347,7 +365,7 @@ export default function DashboardPage() {
         {/* Upload */}
         {me && (
           <BOSUploadPanel
-            planTier={planTier}
+            planTier={execPlanTier}
             onRunComplete={(resp) => {
               // BOSUploadPanel already normalizes into { ui: <EA> }
               const ui = (resp as any)?.ui ?? resp;
@@ -395,13 +413,13 @@ export default function DashboardPage() {
               <button
                 type="button"
                 onClick={runDecisionReviewFromPlan}
-                disabled={decisionReviewBusy}
+                disabled={decisionReviewBusy || !canDecisionReview}
                 className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-500 disabled:opacity-60"
               >
                 {decisionReviewBusy && (
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
                 )}
-                {decisionReviewBusy ? "Reviewing" : "Review this plan"}
+                {decisionReviewBusy ? "Reviewing" : canDecisionReview ? "Review this plan" : "Premium required"}
               </button>
             </div>
 

@@ -20,7 +20,7 @@ export type EAResponse = {
   per_brain?: Record<string, unknown>;
 };
 
-export type PlanTier = "demo" | "pro" | "premium" | "enterprise";
+export type PlanTier = "standard" | "premium" | "enterprise" | "demo" | "pro";
 
 export interface RunEAOptions {
   userId: number;
