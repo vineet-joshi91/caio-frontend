@@ -26,23 +26,34 @@ export interface RunEAOptions {
   userId: number;
   planTier: PlanTier;
   model?: string;
-  timeoutSec?: number;   // seconds
-  numPredict?: number;   // tokens
+  timeoutSec?: number;
+  numPredict?: number;
 }
 
-// Use a dedicated env var so we can keep CAIO backend and validator separate.
 const BOS_BASE =
   process.env.NEXT_PUBLIC_BOS_BASE?.trim().replace(/\/+$/, "") ||
   "https://caioinsights.com";
 
+/**
+ * Internal helper to safely get JWT token on client
+ */
+function getAuthHeaders(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+
+  const token =
+    localStorage.getItem("access_token") ||
+    localStorage.getItem("token") ||
+    "";
+
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 /**
- * Call the BOS Validator /run-ea endpoint with the new credit-gated payload.
- * Client-side only (uses fetch).
+ * Call the BOS Validator /run-ea endpoint with credit-gated payload.
  */
 export async function runEA(packet: unknown, opts: RunEAOptions): Promise<EAResponse> {
   if (!BOS_BASE) {
-    throw new Error("NEXT_PUBLIC_VALIDATOR_API_BASE is not configured");
+    throw new Error("NEXT_PUBLIC_BOS_BASE is not configured");
   }
 
   const body = {
@@ -56,7 +67,10 @@ export async function runEA(packet: unknown, opts: RunEAOptions): Promise<EAResp
 
   const res = await fetch(`${BOS_BASE}/run-ea`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),   // ✅ attach JWT here
+    },
     body: JSON.stringify(body),
   });
 
@@ -74,15 +88,12 @@ export interface WalletBalanceResponse {
 }
 
 export async function fetchWalletBalance(userId: number): Promise<WalletBalanceResponse> {
-  const tok =
-    (typeof window !== "undefined" &&
-      (localStorage.getItem("access_token") || localStorage.getItem("token"))) ||
-    "";
-
   const res = await fetch(`${BOS_BASE}/wallet/balance?user_id=${userId}`, {
-    headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+    headers: {
+      ...getAuthHeaders(),   // ✅ consistent JWT handling
+    },
+    cache: "no-store",
   });
-
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -95,7 +106,6 @@ export async function fetchWalletBalance(userId: number): Promise<WalletBalanceR
 export function extractEAFromStdout(stdout?: string): any | null {
   if (!stdout) return null;
 
-  // Find last JSON object in the string
   const match = stdout.match(/\{[\s\S]*\}$/);
   if (!match) return null;
 
