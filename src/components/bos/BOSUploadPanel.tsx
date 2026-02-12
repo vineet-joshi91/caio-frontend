@@ -162,7 +162,7 @@ function extractEscapedEAFromStdout(stdout: string): any | null {
 
   return null;
 }
-
+  
 function normalizeEAResponse(data: any): any {
   const ui = data?.ui ?? data ?? {};
   if (!ui || typeof ui !== "object") return { ui: {} };
@@ -173,21 +173,29 @@ function normalizeEAResponse(data: any): any {
   }
 
   // 2) Otherwise recover from stdout (pick BEST match, not LAST)
-  const stdout = typeof ui.stdout === "string" ? ui.stdout : "";
-  const best = extractBestEAObject(stdout);
+    const stdout = typeof ui.stdout === "string" ? ui.stdout : "";
 
-  if (best) {
-    return {
-      ui: {
-        ...best,
-        stdout: ui.stdout ?? "",
-        stderr: ui.stderr ?? "",
-        returncode: ui.returncode ?? 0,
-        warnings: ui.warnings ?? [],
-        extract_meta: ui.extract_meta ?? null,
-      },
-    };
-  }
+    // First try: raw JSON objects
+    let best = extractBestEAObject(stdout);
+
+    // Second try: escaped JSON blocks inside debug logs
+    if (!best) {
+      best = extractEscapedEAFromStdout(stdout);
+    }
+
+    if (best) {
+
+      return {
+        ui: {
+          ...best,
+          stdout: ui.stdout ?? "",
+          stderr: ui.stderr ?? "",
+          returncode: ui.returncode ?? 0,
+          warnings: ui.warnings ?? [],
+          extract_meta: ui.extract_meta ?? null,
+        },
+      };
+    }
 
   return { ui };
 }
