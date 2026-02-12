@@ -106,12 +106,19 @@ export async function fetchWalletBalance(userId: number): Promise<WalletBalanceR
 export function extractEAFromStdout(stdout?: string): any | null {
   if (!stdout) return null;
 
-  const match = stdout.match(/\{[\s\S]*\}$/);
-  if (!match) return null;
+  // Scan from the end to find the last parseable JSON object.
+  for (let i = stdout.length - 1; i >= 0; i--) {
+    if (stdout[i] !== "{") continue;
 
-  try {
-    return JSON.parse(match[0]);
-  } catch {
-    return null;
+    const candidate = stdout.slice(i).trim();
+    if (candidate.length > 20000) continue;
+
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // keep scanning
+    }
   }
+
+  return null;
 }

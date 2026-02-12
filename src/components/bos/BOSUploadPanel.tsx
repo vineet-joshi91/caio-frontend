@@ -127,6 +127,42 @@ function extractBestEAObject(stdout: string): any | null {
   return null;
 }
 
+// If backend debug prints escaped JSON like: {\\n  \"executive_summary\": ... \\n}
+// this extracts and unescapes it so we can JSON.parse it.
+function extractEscapedEAFromStdout(stdout: string): any | null {
+  if (!stdout) return null;
+
+  // Find escaped JSON blocks that look like EA output
+  const re = /\{\\n[\s\S]*?\\n\}/g;
+  const matches = stdout.match(re) || [];
+
+  // Prefer the largest candidate that contains executive_summary/top_priorities
+  matches.sort((a, b) => b.length - a.length);
+
+  for (const m of matches) {
+    if (!m.includes('\\"executive_summary\\"') && !m.includes('\\"top_priorities\\"')) {
+      continue;
+    }
+
+    // Unescape common sequences
+    const unescaped = m
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
+
+    try {
+      const parsed = JSON.parse(unescaped);
+      if (looksLikeEA(parsed)) {
+        return parsed.ui && typeof parsed.ui === "object" ? parsed.ui : parsed;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+
 function normalizeEAResponse(data: any): any {
   const ui = data?.ui ?? data ?? {};
   if (!ui || typeof ui !== "object") return { ui: {} };
