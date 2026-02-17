@@ -88,12 +88,12 @@ export interface WalletBalanceResponse {
 }
 
 export async function fetchWalletBalance(userId: number): Promise<WalletBalanceResponse> {
-  const res = await fetch(`${BOS_BASE}/wallet/balance?user_id=${userId}`, {
-    headers: {
-      ...getAuthHeaders(),   // ✅ consistent JWT handling
-    },
-    cache: "no-store",
-  });
+  const res = await fetch(`${BOS_BASE}/wallet/balance`, {
+  headers: {
+    ...getAuthHeaders(),
+  },
+  cache: "no-store",
+});
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");

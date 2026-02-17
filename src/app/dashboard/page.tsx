@@ -46,24 +46,10 @@ function readTokenSafe(): string {
   }
 }
 
-function isExecPlanUI(ui: any) {
-  return (
-    ui &&
-    typeof ui === "object" &&
-    typeof ui.executive_summary === "string" &&
-    Array.isArray(ui.top_priorities) &&
-    !!ui.owner_matrix
-  );
-}
-
-function normalizeTier(raw?: string, isAdmin?: boolean): "standard" | "premium" | "enterprise" {
-  if (isAdmin) return "enterprise";
-
+function normalizeTier(raw?: string, isAdmin?: boolean): "standard" | "premium" {
+  if (isAdmin) return "premium";
   const t = (raw || "").toLowerCase().trim();
-
-  if (t === "enterprise" || t === "admin") return "enterprise";
-  if (t === "premium" || t === "pro") return "premium";
-
+  if (t === "premium" || t === "pro" || t === "enterprise") return "premium";
   return "standard";
 }
 
@@ -80,7 +66,6 @@ export default function DashboardPage() {
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [walletErr, setWalletErr] = useState<string | null>(null);
 
-  // Two separate outputs (never overwrite each other)
   const [executionPlan, setExecutionPlan] = useState<EAResponse | null>(null);
   const [decisionReview, setDecisionReview] = useState<EAResponse | null>(null);
 
@@ -102,7 +87,6 @@ export default function DashboardPage() {
 
     (async () => {
       try {
-        // must use bos-auth/me (not /me) because /me hits static site
         const res = await fetch(`${IDENTITY_BASE}/bos-auth/me`, {
           headers: { Authorization: `Bearer ${t}` },
           cache: "no-store",
@@ -154,14 +138,17 @@ export default function DashboardPage() {
   /* ---------------- Derived ---------------- */
 
   const userTier = normalizeTier(me?.tier, !!me?.is_admin);
-  const execPlanTier: PlanTier = userTier === "enterprise" ? "enterprise" : "standard";
-  const decisionReviewTier: PlanTier = userTier === "enterprise" ? "enterprise" : "premium";
-  const canDecisionReview = userTier === "premium" || userTier === "enterprise";
+  const canDecisionReview = userTier === "premium";
 
-  /* ---------------- Decision Review runner (from plan) ---------------- */
+  /* ---------------- Decision Review ---------------- */
 
   async function runDecisionReviewFromPlan() {
     if (!me?.id) return;
+
+    if (!canDecisionReview) {
+      setDecisionReviewErr("Decision Review is a Premium feature. Upgrade to unlock it.");
+      return;
+    }
 
     setDecisionReviewErr(null);
 
@@ -173,12 +160,7 @@ export default function DashboardPage() {
 
     const planObj = (executionPlan as any)?.ui;
     if (!planObj || typeof planObj.executive_summary !== "string") {
-      setDecisionReviewErr("No Executive Action Plan available to review. Please run Upload & Analyze first.");
-      return;
-    }
-
-    if (!canDecisionReview) {
-      setDecisionReviewErr("Decision Review is a Premium feature. Upgrade to Premium to unlock it.");
+      setDecisionReviewErr("No Executive Action Plan available. Please run Upload & Analyze first.");
       return;
     }
 
@@ -200,7 +182,7 @@ export default function DashboardPage() {
         body: JSON.stringify({
           packet,
           user_id: me.id,
-          plan_tier: decisionReviewTier,
+          plan_tier: userTier,
           timeout_sec: 600,
           num_predict: 768,
           model: "qwen2.5:3b-instruct",
@@ -223,8 +205,11 @@ export default function DashboardPage() {
       const ui = data?.ui ?? data;
       if (!ui) throw new Error("Decision Review returned empty response");
 
-      // IMPORTANT: don't re-parse again; BOSSummary can extract from stdout if needed
       setDecisionReview({ ui } as any);
+
+      // Refresh balance after DR runs
+      if (me?.id) refreshWallet(me.id);
+
     } catch (e: any) {
       setDecisionReviewErr(e?.message || "Decision Review failed");
     } finally {
@@ -239,7 +224,7 @@ export default function DashboardPage() {
       <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
         <div className="max-w-5xl mx-auto">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6">
-            Redirecting…
+            Redirecting...
           </div>
         </div>
       </main>
@@ -253,7 +238,7 @@ export default function DashboardPage() {
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl">
             <h1 className="text-2xl font-semibold">CAIO</h1>
             <p className="mt-2 text-sm opacity-80">
-              Your session has expired or you’re not logged in.
+              Your session has expired or you are not logged in.
             </p>
             <div className="mt-5 flex flex-wrap gap-3">
               <button
@@ -282,16 +267,17 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
       <div className="max-w-5xl mx-auto space-y-6">
+
         {/* Header */}
         <header className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6 shadow-xl">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold">CAIO’s Insights</h1>
+              <h1 className="text-2xl font-semibold">CAIO's Insights</h1>
               <p className="mt-1 text-sm opacity-80">
                 Signed in as <b>{me?.email}</b>
               </p>
               <p className="mt-2 text-sm opacity-70">
-                Upload a real business file and get a unified executive action plan — rule-grounded, not chatbot replies.
+                Upload a real business file and get a unified executive action plan - rule-grounded, not chatbot replies.
               </p>
             </div>
 
@@ -310,7 +296,7 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {/* Credits / Wallet (collapsed utility) */}
+        {/* Credits / Wallet */}
         <div className="relative">
           <details className="group">
             <summary className="flex cursor-pointer items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950/40 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900">
@@ -365,27 +351,25 @@ export default function DashboardPage() {
         {/* Upload */}
         {me && (
           <BOSUploadPanel
-            planTier={execPlanTier}
+            planTier={userTier}
             onRunComplete={(resp) => {
-              // BOSUploadPanel already normalizes into { ui: <EA> }
               const ui = (resp as any)?.ui ?? resp;
 
-              // Hard guard: if UI doesn't look like an EA, don't set junk state
               if (!ui || typeof ui !== "object" || typeof (ui as any).executive_summary !== "string") {
                 console.error("EA normalize failed: unexpected response shape", resp);
                 setExecutionPlan(null);
                 setDecisionReview(null);
-                setDecisionReviewErr("Failed to detect an Executive Action Plan. Please try again with a different file.");
+                setDecisionReviewErr("Failed to detect an Executive Action Plan. Please try again.");
                 return;
               }
 
               setExecutionPlan({ ui } as any);
               setDecisionReview(null);
               setDecisionReviewErr(null);
+
+              // Refresh balance after upload
+              if (me?.id) refreshWallet(me.id);
             }}
-
-
-
           />
         )}
 
@@ -394,7 +378,7 @@ export default function DashboardPage() {
           <BOSSummary ui={executionPlan.ui} title="Executive Action Plan" showDiagnostics={false} />
         )}
 
-        {/* Decision Review trigger */}
+        {/* Decision Review */}
         {executionPlan?.ui && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
             <div className="flex items-start justify-between gap-3">
@@ -403,9 +387,16 @@ export default function DashboardPage() {
                 <div className="text-xs opacity-70">
                   Audit the Executive Action Plan for gaps, missing evidence, risks, and owner accountability.
                 </div>
+
+                {!canDecisionReview && (
+                  <div className="mt-2 text-xs text-amber-400">
+                    Upgrade to Premium to unlock Decision Review.
+                  </div>
+                )}
+
                 {decisionReviewBusy && (
                   <div className="mt-2 text-xs opacity-70">
-                    Reviewing the plan for missing evidence, risks, and accountability…
+                    Reviewing the plan...
                   </div>
                 )}
               </div>
@@ -414,12 +405,16 @@ export default function DashboardPage() {
                 type="button"
                 onClick={runDecisionReviewFromPlan}
                 disabled={decisionReviewBusy || !canDecisionReview}
-                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-500 disabled:opacity-60"
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {decisionReviewBusy && (
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
                 )}
-                {decisionReviewBusy ? "Reviewing" : canDecisionReview ? "Review this plan" : "Premium required"}
+                {decisionReviewBusy
+                  ? "Reviewing..."
+                  : canDecisionReview
+                  ? "Review this plan"
+                  : "Premium only"}
               </button>
             </div>
 
@@ -438,9 +433,10 @@ export default function DashboardPage() {
 
         {loading && (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6">
-            Loading…
+            Loading...
           </div>
         )}
+
       </div>
     </main>
   );
