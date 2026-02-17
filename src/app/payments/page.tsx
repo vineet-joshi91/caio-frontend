@@ -104,7 +104,7 @@ export default function PaymentsPage() {
           </ul>
 
           <div className="mt-4 rounded-lg border border-zinc-700 bg-zinc-950/50 p-3 text-sm opacity-70">
-            Need more credits? Contact us at <a href="mailto:vineetpjoshi.71@gmail.com" className="text-blue-300 underline">support@caioinsights.com</a>
+            Need more credits? Contact us at <a href="mailto:vineetpjoshi.71@gmail.com" className="text-blue-300 underline">vineetpjoshi.71@gmail.com</a>
           </div>
         </div>
 
