@@ -104,13 +104,7 @@ export default function PaymentsPage() {
           </ul>
 
           <div className="mt-4 rounded-lg border border-zinc-700 bg-zinc-950/50 p-3 text-sm opacity-70">
-            <a>
-            Need more credits? Contact us at{" "}
-              href="mailto:support@caioinsights.com"
-              className="text-blue-300 underline"
-            {'>'}
-              support@caioinsights.com
-            </a>
+            Need more credits? Contact us at <a href="mailto:vineetpjoshi.71@gmail.com" className="text-blue-300 underline">support@caioinsights.com</a>
           </div>
         </div>
 
@@ -153,13 +147,7 @@ export default function PaymentsPage() {
 
         {/* FOOTER */}
         <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-4 text-sm opacity-80">
-          <a>
-          Payment questions?{" "}
-          
-            className="underline text-blue-300 hover:text-blue-200"
-            href="mailto:support@caioinsights.com"
-          {'>'}
-            Contact support
+          Payment questions? <a href="mailto:vineetpjoshi.71@gmail.com" className="underline text-blue-300 hover:text-blue-200">Contact support
           </a>
           .
         </div>
