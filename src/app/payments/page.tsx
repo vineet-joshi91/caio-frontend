@@ -1,64 +1,12 @@
 "use client";
 
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useCallback } from "react";
 import Link from "next/link";
 
-const API_BASE =
-  (process.env.NEXT_PUBLIC_BOS_BASE &&
-    process.env.NEXT_PUBLIC_BOS_BASE.trim().replace(/\/+$/, "")) ||
-  "https://caioinsights.com";
-
-function getToken(): string {
-  try {
-    if (typeof window === "undefined") return "";
-    return (
-      localStorage.getItem("token") ||
-      localStorage.getItem("access_token") ||
-      ""
-    );
-  } catch {
-    return "";
-  }
-}
-
 export default function PaymentsPage() {
-  const token = useMemo(getToken, []);
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const startPremium = useCallback(async () => {
-    setErr(null);
-    setCheckoutLoading(true);
-    try {
-      const res = await fetch(
-        `${API_BASE}/bos/api/payments/subscription/create`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ plan: "premium", currency: "INR" }),
-        }
-      );
-
-      const j = await res.json().catch(() => ({}));
-
-      if (res.status === 401) {
-        throw new Error("You must be signed in to start a subscription.");
-      }
-      if (!res.ok || !(j?.short_url || j?.url)) {
-        throw new Error(
-          j?.detail || j?.message || `Checkout failed (HTTP ${res.status}).`
-        );
-      }
-      window.location.href = j.short_url || j.url;
-    } catch (e: any) {
-      setErr(e?.message || "Could not start checkout.");
-    } finally {
-      setCheckoutLoading(false);
-    }
-  }, [token]);
+  const startPremium = useCallback(() => {
+    window.location.href = "https://rzp.io/rzp/dyD6BmX1";
+  }, []);
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-8">
@@ -73,13 +21,6 @@ export default function PaymentsPage() {
             Back to dashboard
           </Link>
         </div>
-
-        {err && (
-          <div className="mb-6 rounded-lg border border-red-700 bg-red-900/30 p-4 text-red-100">
-            <div className="font-semibold">Something went wrong</div>
-            <div className="text-sm opacity-90">{err}</div>
-          </div>
-        )}
 
         {/* STANDARD TIER */}
         <div className="mb-6 rounded-2xl border border-zinc-700 bg-zinc-900/40 p-6">
@@ -138,18 +79,15 @@ export default function PaymentsPage() {
 
           <button
             onClick={startPremium}
-            disabled={checkoutLoading}
-            className="mt-2 w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+            className="mt-2 w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500"
           >
-            {checkoutLoading ? "Loading..." : "Start Premium - ₹7,999/mo"}
+            Start Premium - ₹7,999/mo
           </button>
         </div>
 
         {/* FOOTER */}
         <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-4 text-sm opacity-80">
-          Payment questions? <a href="mailto:vineetpjoshi.71@gmail.com" className="underline text-blue-300 hover:text-blue-200">Contact support
-          </a>
-          .
+          Payment questions? <a href="mailto:vineetpjoshi.71@gmail.com" className="underline text-blue-300 hover:text-blue-200">Contact support</a>.
         </div>
 
       </div>
