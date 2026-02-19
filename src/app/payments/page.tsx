@@ -11,21 +11,13 @@ export default function PaymentsPage() {
   }, []);
 
   const buyCredits = useCallback((pack: "starter" | "growth" | "pro") => {
-    setLoading(pack);
-    
-    // TODO: Replace with actual Razorpay payment links once created
     const urls = {
-      starter: "https://rzp.io/rzp/STARTER_LINK",  // Replace with actual link
-      growth: "https://rzp.io/rzp/GROWTH_LINK",    // Replace with actual link
-      pro: "https://rzp.io/rzp/PRO_LINK",         // Replace with actual link
+      starter: "https://rzp.io/rzp/caio-starter-120",
+      growth: "https://rzp.io/rzp/caio-growth-300",
+      pro: "https://rzp.io/rzp/caio-pro-600",
     };
     
-    // For now, alert user - we'll add real links in Step 3
-    alert(`Credit pack purchase coming soon! Pack: ${pack}`);
-    setLoading(null);
-    
-    // Uncomment when Razorpay links are ready:
-    // window.location.href = urls[pack];
+    window.location.href = urls[pack];
   }, []);
 
   return (
@@ -73,9 +65,9 @@ export default function PaymentsPage() {
               <div className="rounded-xl border border-zinc-700 bg-zinc-950/40 p-4">
                 <div className="text-xs uppercase tracking-wide opacity-60 mb-1">Starter</div>
                 <div className="text-xl font-bold">₹999</div>
-                <div className="text-xs opacity-60 mt-1">100 credits</div>
+                <div className="text-xs opacity-60 mt-1">120 credits</div>
                 <div className="text-xs opacity-50 mt-2">
-                  ~10 EA runs or 2 DR runs
+                  ~12 only EA runs or 2 EA+DR runs
                 </div>
                 <button
                   onClick={() => buyCredits("starter")}
@@ -93,9 +85,9 @@ export default function PaymentsPage() {
                   <div className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded">Popular</div>
                 </div>
                 <div className="text-xl font-bold">₹1,999</div>
-                <div className="text-xs opacity-60 mt-1">250 credits</div>
+                <div className="text-xs opacity-60 mt-1">300 credits</div>
                 <div className="text-xs opacity-50 mt-2">
-                  ~25 EA runs or 5 DR runs
+                  30 only EA runs or 5 EA+DR runs
                 </div>
                 <button
                   onClick={() => buyCredits("growth")}
@@ -110,9 +102,9 @@ export default function PaymentsPage() {
               <div className="rounded-xl border border-zinc-700 bg-zinc-950/40 p-4">
                 <div className="text-xs uppercase tracking-wide opacity-60 mb-1">Pro</div>
                 <div className="text-xl font-bold">₹3,999</div>
-                <div className="text-xs opacity-60 mt-1">500 credits</div>
+                <div className="text-xs opacity-60 mt-1">600 credits</div>
                 <div className="text-xs opacity-50 mt-2">
-                  ~50 EA runs or 10 DR runs
+                  60 only EA runs or 10 EA+DR runs
                 </div>
                 <button
                   onClick={() => buyCredits("pro")}
