@@ -10,14 +10,47 @@ export default function PaymentsPage() {
     window.location.href = "https://rzp.io/rzp/dyD6BmX1";
   }, []);
 
-  const buyCredits = useCallback((pack: "starter" | "growth" | "pro") => {
-    const urls = {
-      starter: "https://rzp.io/rzp/caio-starter-120",
-      growth: "https://rzp.io/rzp/caio-growth-300",
-      pro: "https://rzp.io/rzp/caio-pro-600",
-    };
+  const buyCredits = useCallback(async (pack: "starter" | "growth" | "pro") => {
+    setLoading(pack);
     
-    window.location.href = urls[pack];
+    try {
+      const token = localStorage.getItem("access_token") || localStorage.getItem("token") || "";
+      if (!token) {
+        alert("Please log in to purchase credits");
+        window.location.href = "/login";
+        return;
+      }
+      
+      // Map frontend pack names to backend pack_ids
+      const packIds = {
+        starter: "starter_120",
+        growth: "growth_300",
+        pro: "pro_600",
+      };
+      
+      const response = await fetch("https://caioinsights.com/api/payments/topup/initiate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({ pack: packIds[pack] }),
+      });
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: "Payment initiation failed" }));
+        throw new Error(error.detail || "Failed to initiate payment");
+      }
+      
+      const data = await response.json();
+      
+      // Redirect to Razorpay
+      window.location.href = data.payment_url;
+      
+    } catch (error: any) {
+      alert(error.message || "Failed to initiate payment");
+      setLoading(null);
+    }
   }, []);
 
   return (
