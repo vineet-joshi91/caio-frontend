@@ -48,6 +48,11 @@ function routeForTier(_t: Tier): string {
   return "/dashboard";
 }
 
+// add near the top, next to API_BASE
+const IDENTITY_BASE =
+  process.env.NEXT_PUBLIC_IDENTITY_BASE?.trim().replace(/\/+$/, "") ||
+  "https://bos.caioinsights.com";
+
 /* ------------------ page ------------------ */
 export default function SignupPage() {
   const router = useRouter();
@@ -83,22 +88,19 @@ export default function SignupPage() {
     setBusy(true);
 
     try {
-      const resp = await fetch(`${API_BASE}/bos-auth/signup`, {
+      const resp = await fetch(`${IDENTITY_BASE}/bos-auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        //credentials: "include",
-        body: JSON.stringify({ email: email.trim(), password }),
+        body: JSON.stringify({ email, password }),
       });
 
       const raw = await resp.text();
-      let data: any = {};
-      try { data = raw ? JSON.parse(raw) : {}; } catch {}
+      let data: any = null;
+      try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
 
       if (!resp.ok) {
-        clearToken();
-        throw new Error(
-          data?.detail || data?.message || raw || "Signup failed. Please try again."
-        );
+        const msg = data?.detail || data?.message || raw || `HTTP ${resp.status}`;
+        throw new Error(msg);
       }
 
       const tok: string | undefined = data?.access_token;
