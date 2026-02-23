@@ -83,7 +83,7 @@ export default function SignupPage() {
     setBusy(true);
 
     try {
-      const resp = await fetch(`${API_BASE}/api/signup`, {
+      const resp = await fetch(`${API_BASE}/bos-auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         //credentials: "include",
