@@ -88,33 +88,34 @@ export default function SignupPage() {
     setBusy(true);
 
     try {
-      const resp = await fetch(`${IDENTITY_BASE}/bos-auth/signup`, {
+      const resp = await fetch(`${API_BASE}/bos-auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim(), password }),
       });
 
-      const raw = await resp.text();
-      let data: any = null;
-      try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
-
       if (!resp.ok) {
-        const msg = data?.detail || data?.message || raw || `HTTP ${resp.status}`;
-        throw new Error(msg);
+        const errorData = await resp.json().catch(() => ({}));
+        
+        // If email already exists, redirect to login
+        if (resp.status === 400 && errorData?.detail?.includes("already registered")) {
+          setError("Email already registered. Redirecting to login...");
+          setTimeout(() => router.replace("/login"), 2000);
+          return;
+        }
+        
+        throw new Error(errorData?.detail || "Signup failed. Please try again.");
       }
 
-      const tok: string | undefined = data?.access_token;
+      const data = await resp.json();
+      const tok = data?.access_token;
+
       if (tok) {
         saveToken(tok);
-        const p = await fetchProfileByToken(tok);
-        if (p.ok) {
-          const j = await p.json();
-          router.replace(routeForTier((j?.tier as Tier) || "demo"));
-        } else {
-          router.replace("/dashboard");
-        }
+        // Redirect to dashboard
+        router.replace("/dashboard");
       } else {
-        // Some backends may not auto-login after signup; fall back to login
+        // No token returned, redirect to login
         router.replace("/login");
       }
     } catch (err: any) {
